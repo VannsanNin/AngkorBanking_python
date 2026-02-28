@@ -17,29 +17,31 @@ def transfer_money(bank, from_account, from_pin, to_account, amount):
     with bank._connect() as conn:
         try:
             conn.execute("BEGIN")
-            source = conn.execute(
-                "SELECT balance FROM accounts WHERE account_number = ? AND pin_hash = ?",
-                (from_account, pin_hash),
-            ).fetchone()
-            if not source:
+            # 1. Deduct from source if balance is sufficient and PIN is correct
+            cursor = conn.execute(
+                "UPDATE accounts SET balance = balance - ? WHERE account_number = ? AND pin_hash = ? AND balance >= ?",
+                (amount, from_account, pin_hash, amount),
+            )
+            if cursor.rowcount == 0:
                 conn.execute("ROLLBACK")
-                return {"success": False, "message": "Invalid source account number or PIN."}
+                # Differentiate between bad credentials/account vs insufficient funds
+                existing = conn.execute(
+                    "SELECT balance FROM accounts WHERE account_number = ? AND pin_hash = ?",
+                    (from_account, pin_hash),
+                ).fetchone()
+                if not existing:
+                    return {"success": False, "message": "Invalid source account number or PIN."}
+                return {"success": False, "message": "Insufficient source balance."}
 
+            # 2. Check if destination exists
             target = conn.execute(
-                "SELECT balance FROM accounts WHERE account_number = ?", (to_account,)
+                "SELECT 1 FROM accounts WHERE account_number = ?", (to_account,)
             ).fetchone()
             if not target:
                 conn.execute("ROLLBACK")
                 return {"success": False, "message": "Destination account not found."}
 
-            if source[0] < amount:
-                conn.execute("ROLLBACK")
-                return {"success": False, "message": "Insufficient source balance."}
-
-            conn.execute(
-                "UPDATE accounts SET balance = balance - ? WHERE account_number = ?",
-                (amount, from_account),
-            )
+            # 3. Add to destination
             conn.execute(
                 "UPDATE accounts SET balance = balance + ? WHERE account_number = ?",
                 (amount, to_account),

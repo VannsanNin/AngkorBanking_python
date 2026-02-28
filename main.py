@@ -6,10 +6,11 @@ import sqlite3
 import sys
 from datetime import datetime
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QDate, Qt
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDateEdit,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -153,10 +154,10 @@ class BankingSystem:
     def deposit_money(self, account_number, amount):
         return deposit_money_op(self, account_number=account_number, amount=amount)
 
-    def widrawal_money(self, account_number, pin, amount):
+    def withdrawal_money(self, account_number, pin, amount):
         return withdrawal_money_op(self, account_number=account_number, pin=pin, amount=amount)
 
-    def trainsfer_money(self, from_account, from_pin, to_account, amount):
+    def transfer_money(self, from_account, from_pin, to_account, amount):
         return transfer_money_op(
             self,
             from_account=from_account,
@@ -364,10 +365,12 @@ class BankingApp(QMainWindow):
         self.create_address = QLineEdit()
         self.create_career = QLineEdit()
         self.create_id_card_number = QLineEdit()
-        self.create_id_card_issue_date = QLineEdit()
-        self.create_id_card_issue_date.setPlaceholderText("YYYY-MM-DD")
-        self.create_id_card_expiry_date = QLineEdit()
-        self.create_id_card_expiry_date.setPlaceholderText("YYYY-MM-DD")
+        self.create_id_card_issue_date = QDateEdit()
+        self.create_id_card_issue_date.setCalendarPopup(True)
+        self.create_id_card_issue_date.setDate(QDate.currentDate())
+        self.create_id_card_expiry_date = QDateEdit()
+        self.create_id_card_expiry_date.setCalendarPopup(True)
+        self.create_id_card_expiry_date.setDate(QDate.currentDate().addYears(10))
         self.create_email = QLineEdit()
         self.create_pin = QLineEdit()
         self.create_pin.setEchoMode(QLineEdit.Password)
@@ -512,7 +515,10 @@ class BankingApp(QMainWindow):
             self.create_opening_balance,
         ]
         for field in self.create_fields:
-            field.textChanged.connect(self._sync_create_preview_and_state)
+            if isinstance(field, QLineEdit):
+                field.textChanged.connect(self._sync_create_preview_and_state)
+            elif isinstance(field, QDateEdit):
+                field.dateChanged.connect(self._sync_create_preview_and_state)
         self._sync_create_preview_and_state()
         return tab
 
@@ -522,13 +528,7 @@ class BankingApp(QMainWindow):
         return text if text else dash
 
     def _create_preview_status(self):
-        expiry_text = self.create_id_card_expiry_date.text().strip()
-        if not expiry_text:
-            return "Status: Unknown", "unknown"
-        if not self.bank._validate_date(expiry_text):
-            return "Status: Invalid Date", "invalid"
-
-        expiry_date = datetime.strptime(expiry_text, "%Y-%m-%d").date()
+        expiry_date = self.create_id_card_expiry_date.date().toPyDate()
         if expiry_date < datetime.now().date():
             return "Status: Expired", "expired"
         return "Status: Active", "active"
@@ -538,26 +538,10 @@ class BankingApp(QMainWindow):
         if not self.create_id_card_number.text().strip():
             errors.append("ID card number is required.")
 
-        issue_text = self.create_id_card_issue_date.text().strip()
-        expiry_text = self.create_id_card_expiry_date.text().strip()
-        issue_date = None
-        expiry_date = None
+        issue_date = self.create_id_card_issue_date.date().toPyDate()
+        expiry_date = self.create_id_card_expiry_date.date().toPyDate()
 
-        if not issue_text:
-            errors.append("Date create ID card is required.")
-        elif not self.bank._validate_date(issue_text):
-            errors.append("Date create ID card must be YYYY-MM-DD.")
-        else:
-            issue_date = datetime.strptime(issue_text, "%Y-%m-%d")
-
-        if not expiry_text:
-            errors.append("Expiry date is required.")
-        elif not self.bank._validate_date(expiry_text):
-            errors.append("Expiry date must be YYYY-MM-DD.")
-        else:
-            expiry_date = datetime.strptime(expiry_text, "%Y-%m-%d")
-
-        if issue_date and expiry_date and expiry_date <= issue_date:
+        if expiry_date <= issue_date:
             errors.append("Expiry date must be after ID card create date.")
 
         if not self.create_career.text().strip():
@@ -594,9 +578,9 @@ class BankingApp(QMainWindow):
         self.preview_id_card_number.setText(
             self._display_or_dash(self.create_id_card_number.text(), "— — — — — —")
         )
-        self.preview_issue_date.setText(self._display_or_dash(self.create_id_card_issue_date.text()))
+        self.preview_issue_date.setText(self.create_id_card_issue_date.date().toString("yyyy-MM-dd"))
         self.preview_expiry_date.setText(
-            self._display_or_dash(self.create_id_card_expiry_date.text())
+            self.create_id_card_expiry_date.date().toString("yyyy-MM-dd")
         )
         self.preview_career.setText(self._display_or_dash(self.create_career.text()))
         self.preview_phone.setText(self._display_or_dash(self.create_phone.text()))
@@ -615,7 +599,10 @@ class BankingApp(QMainWindow):
 
     def _handle_clear_create_form(self, status_label):
         for field in self.create_fields:
-            field.clear()
+            if isinstance(field, QLineEdit):
+                field.clear()
+            elif isinstance(field, QDateEdit):
+                field.setDate(QDate.currentDate())
         self.create_opening_balance.setText("0")
 
         status_label.setText("")
@@ -628,25 +615,151 @@ class BankingApp(QMainWindow):
     def _check_account_tab(self):
         tab, layout, form, status = self._form_shell()
         self.check_account_number = QLineEdit()
-        self.check_pin = QLineEdit()
-        self.check_pin.setEchoMode(QLineEdit.Password)
-        self.check_result = QTextEdit()
-        self.check_result.setReadOnly(True)
-        self.check_result.setPlaceholderText("Account details will appear here.")
+        self.check_account_number.setPlaceholderText("10-digit account number")
 
         form.addRow("Account Number:", self.check_account_number)
-        form.addRow("PIN (optional):", self.check_pin)
 
         action = QPushButton("Check Account")
         action.clicked.connect(lambda: self._handle_check_account(status))
+        self.check_account_number.returnPressed.connect(action.click)
 
         action_row = QHBoxLayout()
         action_row.addStretch()
         action_row.addWidget(action)
         layout.addLayout(action_row)
         layout.addWidget(status)
-        layout.addWidget(self.check_result)
+        layout.addSpacing(8)
+
+        self.check_preview_panel = QWidget()
+        self.check_preview_panel.setObjectName("checkPreviewPanel")
+        check_preview_layout = QVBoxLayout(self.check_preview_panel)
+        check_preview_layout.setContentsMargins(14, 14, 14, 14)
+        check_preview_layout.setSpacing(10)
+
+        preview_title = QLabel("Account Preview")
+        preview_title.setObjectName("sectionLabel")
+        preview_note = QLabel("Modern account snapshot for faster admin review.")
+        preview_note.setObjectName("noteLabel")
+
+        summary_card = QWidget()
+        summary_card.setObjectName("checkSummaryCard")
+        summary_layout = QHBoxLayout(summary_card)
+        summary_layout.setContentsMargins(14, 14, 14, 14)
+        summary_layout.setSpacing(14)
+
+        summary_left = QWidget()
+        summary_left_layout = QVBoxLayout(summary_left)
+        summary_left_layout.setContentsMargins(0, 0, 0, 0)
+        summary_left_layout.setSpacing(3)
+        name_title = QLabel("CUSTOMER")
+        name_title.setObjectName("previewMetaLabel")
+        self.check_preview_name = QLabel("—")
+        self.check_preview_name.setObjectName("checkPrimaryValue")
+        account_title = QLabel("ACCOUNT NUMBER")
+        account_title.setObjectName("previewMetaLabel")
+        self.check_preview_account_number = QLabel("— — — — — —")
+        self.check_preview_account_number.setObjectName("previewNumber")
+        summary_left_layout.addWidget(name_title)
+        summary_left_layout.addWidget(self.check_preview_name)
+        summary_left_layout.addSpacing(6)
+        summary_left_layout.addWidget(account_title)
+        summary_left_layout.addWidget(self.check_preview_account_number)
+
+        summary_right = QWidget()
+        summary_right_layout = QVBoxLayout(summary_right)
+        summary_right_layout.setContentsMargins(0, 0, 0, 0)
+        summary_right_layout.setSpacing(6)
+        balance_title = QLabel("AVAILABLE BALANCE")
+        balance_title.setObjectName("previewMetaLabel")
+        self.check_preview_balance = QLabel("$0.00")
+        self.check_preview_balance.setObjectName("checkBalanceValue")
+        self.check_preview_status_badge = QLabel("Status: Unknown")
+        self.check_preview_status_badge.setObjectName("previewBadge")
+        self.check_preview_status_badge.setProperty("state", "unknown")
+        summary_right_layout.addWidget(balance_title, 0, Qt.AlignRight)
+        summary_right_layout.addWidget(self.check_preview_balance, 0, Qt.AlignRight)
+        summary_right_layout.addWidget(self.check_preview_status_badge, 0, Qt.AlignRight)
+        summary_right_layout.addStretch()
+
+        summary_layout.addWidget(summary_left, 3)
+        summary_layout.addWidget(summary_right, 2)
+
+        details_card = QWidget()
+        details_card.setObjectName("checkDetailsCard")
+        details_layout = QVBoxLayout(details_card)
+        details_layout.setContentsMargins(14, 14, 14, 14)
+        details_layout.setSpacing(10)
+
+        details_grid = QGridLayout()
+        details_grid.setHorizontalSpacing(16)
+        details_grid.setVerticalSpacing(10)
+
+        def _create_check_item(label_text):
+            container = QWidget()
+            container_layout = QVBoxLayout(container)
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            container_layout.setSpacing(2)
+            title = QLabel(label_text)
+            title.setObjectName("previewMetaLabel")
+            value = QLabel("—")
+            value.setObjectName("previewMetaValue")
+            value.setWordWrap(True)
+            container_layout.addWidget(title)
+            container_layout.addWidget(value)
+            return container, value
+
+        phone_item, self.check_preview_phone = _create_check_item("Phone")
+        email_item, self.check_preview_email = _create_check_item("Email")
+        career_item, self.check_preview_career = _create_check_item("Career")
+        id_card_item, self.check_preview_id_card_number = _create_check_item("ID Card Number")
+        issue_item, self.check_preview_issue_date = _create_check_item("ID Card Create Date")
+        expiry_item, self.check_preview_expiry_date = _create_check_item("ID Card Expiry Date")
+        created_item, self.check_preview_created_at = _create_check_item("Created At")
+
+        details_grid.addWidget(phone_item, 0, 0)
+        details_grid.addWidget(email_item, 0, 1)
+        details_grid.addWidget(career_item, 1, 0)
+        details_grid.addWidget(id_card_item, 1, 1)
+        details_grid.addWidget(issue_item, 2, 0)
+        details_grid.addWidget(expiry_item, 2, 1)
+        details_grid.addWidget(created_item, 3, 0, 1, 2)
+
+        address_title = QLabel("Current Address")
+        address_title.setObjectName("previewMetaLabel")
+        self.check_preview_address = QLabel("—")
+        self.check_preview_address.setObjectName("previewMetaValue")
+        self.check_preview_address.setWordWrap(True)
+
+        details_layout.addLayout(details_grid)
+        details_layout.addWidget(address_title)
+        details_layout.addWidget(self.check_preview_address)
+
+        check_preview_layout.addWidget(preview_title)
+        check_preview_layout.addWidget(preview_note)
+        check_preview_layout.addWidget(summary_card)
+        check_preview_layout.addWidget(details_card)
+
+        layout.addWidget(self.check_preview_panel)
+        self._reset_check_preview()
         return tab
+
+    def _reset_check_preview(self):
+        self.check_preview_name.setText("No account selected")
+        self.check_preview_account_number.setText("— — — — — —")
+        self.check_preview_balance.setText("$0.00")
+        self.check_preview_status_badge.setText("Status: Unknown")
+        self.check_preview_status_badge.setProperty("state", "unknown")
+        self.check_preview_status_badge.style().unpolish(self.check_preview_status_badge)
+        self.check_preview_status_badge.style().polish(self.check_preview_status_badge)
+
+        self.check_preview_phone.setText("—")
+        self.check_preview_email.setText("—")
+        self.check_preview_career.setText("—")
+        self.check_preview_id_card_number.setText("—")
+        self.check_preview_issue_date.setText("—")
+        self.check_preview_expiry_date.setText("—")
+        self.check_preview_created_at.setText("—")
+        self.check_preview_address.setText("—")
 
     def _deposit_tab(self):
         tab, layout, form, status = self._form_shell()
@@ -724,10 +837,17 @@ class BankingApp(QMainWindow):
         self.update_address = QLineEdit()
         self.update_career = QLineEdit()
         self.update_id_card_number = QLineEdit()
-        self.update_id_card_issue_date = QLineEdit()
-        self.update_id_card_issue_date.setPlaceholderText("YYYY-MM-DD")
-        self.update_id_card_expiry_date = QLineEdit()
-        self.update_id_card_expiry_date.setPlaceholderText("YYYY-MM-DD")
+        self.update_id_card_issue_date = QDateEdit()
+        self.update_id_card_issue_date.setCalendarPopup(True)
+        self.update_id_card_issue_date.setEnabled(False)
+        self.update_id_card_issue_date_check = QCheckBox("Update")
+        self.update_id_card_issue_date_check.toggled.connect(self.update_id_card_issue_date.setEnabled)
+
+        self.update_id_card_expiry_date = QDateEdit()
+        self.update_id_card_expiry_date.setCalendarPopup(True)
+        self.update_id_card_expiry_date.setEnabled(False)
+        self.update_id_card_expiry_date_check = QCheckBox("Update")
+        self.update_id_card_expiry_date_check.toggled.connect(self.update_id_card_expiry_date.setEnabled)
         note = QLabel("Leave any field blank to keep the existing value.")
         note.setObjectName("noteLabel")
 
@@ -738,8 +858,16 @@ class BankingApp(QMainWindow):
         form.addRow("New Current Address:", self.update_address)
         form.addRow("New Career:", self.update_career)
         form.addRow("New ID Card Number:", self.update_id_card_number)
-        form.addRow("New ID Card Create Date:", self.update_id_card_issue_date)
-        form.addRow("New ID Card Expiry Date:", self.update_id_card_expiry_date)
+
+        issue_date_row = QHBoxLayout()
+        issue_date_row.addWidget(self.update_id_card_issue_date)
+        issue_date_row.addWidget(self.update_id_card_issue_date_check)
+        form.addRow("New ID Card Create Date:", issue_date_row)
+
+        expiry_date_row = QHBoxLayout()
+        expiry_date_row.addWidget(self.update_id_card_expiry_date)
+        expiry_date_row.addWidget(self.update_id_card_expiry_date_check)
+        form.addRow("New ID Card Expiry Date:", expiry_date_row)
         form.addRow("New Email:", self.update_email)
 
         action = QPushButton("Update Information")
@@ -804,8 +932,8 @@ class BankingApp(QMainWindow):
             current_address=self.create_address.text(),
             career=self.create_career.text(),
             id_card_number=self.create_id_card_number.text(),
-            id_card_issue_date=self.create_id_card_issue_date.text(),
-            id_card_expiry_date=self.create_id_card_expiry_date.text(),
+            id_card_issue_date=self.create_id_card_issue_date.date().toString("yyyy-MM-dd"),
+            id_card_expiry_date=self.create_id_card_expiry_date.date().toString("yyyy-MM-dd"),
             email=self.create_email.text(),
             pin=self.create_pin.text(),
             opening_balance=self.create_opening_balance.text(),
@@ -820,27 +948,48 @@ class BankingApp(QMainWindow):
             )
 
     def _handle_check_account(self, status_label):
-        pin = self.check_pin.text().strip() or None
-        result = self.bank.check_user_account(self.check_account_number.text(), pin=pin)
+        result = self.bank.check_user_account(self.check_account_number.text())
         self._set_status(status_label, result)
         if result.get("success"):
             data = result["data"]
-            details = (
-                f"Account Number : {data['account_number']}\n"
-                f"Name           : {data['full_name']}\n"
-                f"Phone          : {data['phone'] or '-'}\n"
-                f"Current Address: {data['address'] or '-'}\n"
-                f"Career         : {data['career'] or '-'}\n"
-                f"ID Card Number : {data['id_card_number'] or '-'}\n"
-                f"ID Card Create : {data['id_card_issue_date'] or '-'}\n"
-                f"ID Card Expiry : {data['id_card_expiry_date'] or '-'}\n"
-                f"Email          : {data['email'] or '-'}\n"
-                f"Balance        : ${data['balance']:,.2f}\n"
-                f"Created At     : {data['created_at']}"
+            try:
+                balance_value = float(data.get("balance", 0.0))
+            except (TypeError, ValueError):
+                balance_value = 0.0
+
+            status_value = (data.get("id_card_status") or "Unknown").strip()
+            status_state = status_value.lower()
+            if status_state == "invalid date":
+                status_state = "invalid"
+            elif status_state not in {"active", "expired", "invalid"}:
+                status_state = "unknown"
+
+            self.check_preview_name.setText(self._display_or_dash(data.get("full_name")))
+            self.check_preview_account_number.setText(
+                self._display_or_dash(data.get("account_number"), "— — — — — —")
             )
-            self.check_result.setText(details)
+            self.check_preview_balance.setText(f"${balance_value:,.2f}")
+            self.check_preview_status_badge.setText(f"Status: {status_value}")
+            self.check_preview_status_badge.setProperty("state", status_state)
+            self.check_preview_status_badge.style().unpolish(self.check_preview_status_badge)
+            self.check_preview_status_badge.style().polish(self.check_preview_status_badge)
+
+            self.check_preview_phone.setText(self._display_or_dash(data.get("phone")))
+            self.check_preview_email.setText(self._display_or_dash(data.get("email")))
+            self.check_preview_career.setText(self._display_or_dash(data.get("career")))
+            self.check_preview_id_card_number.setText(
+                self._display_or_dash(data.get("id_card_number"))
+            )
+            self.check_preview_issue_date.setText(
+                self._display_or_dash(data.get("id_card_issue_date"))
+            )
+            self.check_preview_expiry_date.setText(
+                self._display_or_dash(data.get("id_card_expiry_date"))
+            )
+            self.check_preview_created_at.setText(self._display_or_dash(data.get("created_at")))
+            self.check_preview_address.setText(self._display_or_dash(data.get("address")))
         else:
-            self.check_result.clear()
+            self._reset_check_preview()
 
     def _handle_deposit(self, status_label):
         result = self.bank.deposit_money(
@@ -850,7 +999,7 @@ class BankingApp(QMainWindow):
         self._set_status(status_label, result)
 
     def _handle_withdrawal(self, status_label):
-        result = self.bank.widrawal_money(
+        result = self.bank.withdrawal_money(
             self.withdraw_account.text(),
             self.withdraw_pin.text(),
             self.withdraw_amount.text(),
@@ -858,7 +1007,7 @@ class BankingApp(QMainWindow):
         self._set_status(status_label, result)
 
     def _handle_transfer(self, status_label):
-        result = self.bank.trainsfer_money(
+        result = self.bank.transfer_money(
             self.transfer_from_account.text(),
             self.transfer_pin.text(),
             self.transfer_to_account.text(),
@@ -881,10 +1030,18 @@ class BankingApp(QMainWindow):
             phone=self.update_phone.text(),
             current_address=self.update_address.text(),
             career=self.update_career.text(),
-            id_card_number=self.update_id_card_number.text(),
-            id_card_issue_date=self.update_id_card_issue_date.text(),
-            id_card_expiry_date=self.update_id_card_expiry_date.text(),
-            email=self.update_email.text(),
+            id_card_number=self.update_id_card_number.text().strip() or None,
+            id_card_issue_date=(
+                self.update_id_card_issue_date.date().toString("yyyy-MM-dd")
+                if self.update_id_card_issue_date_check.isChecked()
+                else None
+            ),
+            id_card_expiry_date=(
+                self.update_id_card_expiry_date.date().toString("yyyy-MM-dd")
+                if self.update_id_card_expiry_date_check.isChecked()
+                else None
+            ),
+            email=self.update_email.text().strip() or None,
         )
         if result.get("success"):
             result["message"] = "User information updated successfully."

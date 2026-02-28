@@ -49,6 +49,40 @@ QWidget#previewPanel {
     border-radius: 10px;
 }
 
+QWidget#checkPreviewPanel {
+    background: #f5f9ff;
+    border: 1px solid #d4e0ee;
+    border-radius: 12px;
+}
+
+QWidget#checkSummaryCard {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #eef5ff,
+        stop: 1 #f8fbff
+    );
+    border: 1px solid #cad9e9;
+    border-radius: 12px;
+}
+
+QWidget#checkDetailsCard {
+    background: #ffffff;
+    border: 1px solid #d7e1ec;
+    border-radius: 12px;
+}
+
+QLabel#checkPrimaryValue {
+    font-size: 19px;
+    font-weight: 700;
+    color: #173b62;
+}
+
+QLabel#checkBalanceValue {
+    font-size: 28px;
+    font-weight: 800;
+    color: #1a6b4a;
+}
+
 QWidget#previewCard {
     background: #ffffff;
     border: 1px solid #d7e1ec;

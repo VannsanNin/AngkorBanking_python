@@ -12,22 +12,23 @@ def withdrawal_money(bank, account_number, pin, amount):
 
     pin_hash = bank._hash_pin(pin)
     with bank._connect() as conn:
-        row = conn.execute(
-            "SELECT balance FROM accounts WHERE account_number = ? AND pin_hash = ?",
-            (account_number, pin_hash),
-        ).fetchone()
-        if not row:
-            return {"success": False, "message": "Invalid account number or PIN."}
-
-        current_balance = row[0]
-        if current_balance < amount:
+        cursor = conn.execute(
+            "UPDATE accounts SET balance = balance - ? WHERE account_number = ? AND pin_hash = ? AND balance >= ?",
+            (amount, account_number, pin_hash, amount),
+        )
+        if cursor.rowcount == 0:
+            # Check if it was because of insufficient balance or wrong account/PIN
+            row = conn.execute(
+                "SELECT balance FROM accounts WHERE account_number = ? AND pin_hash = ?",
+                (account_number, pin_hash),
+            ).fetchone()
+            if not row:
+                return {"success": False, "message": "Invalid account number or PIN."}
             return {"success": False, "message": "Insufficient balance."}
 
-        conn.execute(
-            "UPDATE accounts SET balance = balance - ? WHERE account_number = ?",
-            (amount, account_number),
-        )
-        new_balance = current_balance - amount
+        new_balance = conn.execute(
+            "SELECT balance FROM accounts WHERE account_number = ?", (account_number,)
+        ).fetchone()[0]
 
     return {
         "success": True,
