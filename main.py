@@ -1,6 +1,7 @@
 import hashlib
 import os
 import random
+import re
 import sqlite3
 import sys
 from datetime import datetime
@@ -10,17 +11,28 @@ from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
+
+from operations.check_account import check_user_account as check_user_account_op
+from operations.create_account import create_user_account as create_user_account_op
+from operations.delete_account import delete_user_account as delete_user_account_op
+from operations.deposit import deposit_money as deposit_money_op
+from operations.transfer import transfer_money as transfer_money_op
+from operations.update_account import update_user_information as update_user_information_op
+from operations.withdrawal import withdrawal_money as withdrawal_money_op
 
 
 class BankingSystem:
@@ -39,15 +51,48 @@ class BankingSystem:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     account_number TEXT UNIQUE NOT NULL,
                     full_name TEXT NOT NULL,
-                    phone TEXT,
+                    phone TEXT NOT NULL,
                     email TEXT,
-                    address TEXT,
+                    address TEXT NOT NULL,
+                    id_card_number TEXT NOT NULL,
+                    id_card_issue_date TEXT NOT NULL,
+                    id_card_expiry_date TEXT NOT NULL,
+                    career TEXT NOT NULL,
                     pin_hash TEXT NOT NULL,
                     balance REAL NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
                 )
                 """
             )
+            self._migrate_accounts_table(conn)
+
+    @staticmethod
+    def _migrate_accounts_table(conn):
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(accounts)").fetchall()
+        }
+        required_columns = {
+            "id_card_number": "TEXT NOT NULL DEFAULT ''",
+            "id_card_issue_date": "TEXT NOT NULL DEFAULT ''",
+            "id_card_expiry_date": "TEXT NOT NULL DEFAULT ''",
+            "career": "TEXT NOT NULL DEFAULT ''",
+        }
+
+        for column, definition in required_columns.items():
+            if column not in columns:
+                conn.execute(f"ALTER TABLE accounts ADD COLUMN {column} {definition}")
+
+        conn.execute("UPDATE accounts SET phone = '' WHERE phone IS NULL")
+        conn.execute("UPDATE accounts SET address = '' WHERE address IS NULL")
+        conn.execute("UPDATE accounts SET email = '' WHERE email IS NULL")
+        conn.execute("UPDATE accounts SET id_card_number = '' WHERE id_card_number IS NULL")
+        conn.execute(
+            "UPDATE accounts SET id_card_issue_date = '' WHERE id_card_issue_date IS NULL"
+        )
+        conn.execute(
+            "UPDATE accounts SET id_card_expiry_date = '' WHERE id_card_expiry_date IS NULL"
+        )
+        conn.execute("UPDATE accounts SET career = '' WHERE career IS NULL")
 
     @staticmethod
     def _hash_pin(pin):
@@ -56,6 +101,14 @@ class BankingSystem:
     @staticmethod
     def _validate_pin(pin):
         return pin.isdigit() and len(pin) == 4
+
+    @staticmethod
+    def _validate_date(date_text):
+        try:
+            parsed = datetime.strptime(date_text, "%Y-%m-%d")
+        except ValueError:
+            return False
+        return parsed.strftime("%Y-%m-%d") == date_text
 
     def _generate_account_number(self):
         with self._connect() as conn:
@@ -68,259 +121,79 @@ class BankingSystem:
                     return account_number
 
     def create_user_account(
-        self, full_name, phone, email, address, pin, opening_balance=0.0
+        self,
+        full_name,
+        phone,
+        email,
+        current_address,
+        id_card_number,
+        id_card_issue_date,
+        id_card_expiry_date,
+        career,
+        pin,
+        opening_balance=0.0,
     ):
-        full_name = full_name.strip()
-        if not full_name:
-            return {"success": False, "message": "Full name is required."}
-        if not self._validate_pin(pin):
-            return {"success": False, "message": "PIN must be exactly 4 digits."}
-        try:
-            opening_balance = float(opening_balance)
-        except (TypeError, ValueError):
-            return {"success": False, "message": "Opening balance must be numeric."}
-        if opening_balance < 0:
-            return {"success": False, "message": "Opening balance cannot be negative."}
-
-        account_number = self._generate_account_number()
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO accounts (
-                    account_number, full_name, phone, email, address, pin_hash, balance, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    account_number,
-                    full_name,
-                    phone.strip(),
-                    email.strip(),
-                    address.strip(),
-                    self._hash_pin(pin),
-                    opening_balance,
-                    created_at,
-                ),
-            )
-
-        return {
-            "success": True,
-            "message": f"Account created successfully. Account Number: {account_number}",
-            "data": {"account_number": account_number},
-        }
+        return create_user_account_op(
+            self,
+            full_name=full_name,
+            phone=phone,
+            email=email,
+            current_address=current_address,
+            id_card_number=id_card_number,
+            id_card_issue_date=id_card_issue_date,
+            id_card_expiry_date=id_card_expiry_date,
+            career=career,
+            pin=pin,
+            opening_balance=opening_balance,
+        )
 
     def check_user_account(self, account_number, pin=None):
-        account_number = account_number.strip()
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT account_number, full_name, phone, email, address, balance, created_at, pin_hash
-                FROM accounts
-                WHERE account_number = ?
-                """,
-                (account_number,),
-            ).fetchone()
-
-        if not row:
-            return {"success": False, "message": "Account not found."}
-        if pin and self._hash_pin(pin) != row[7]:
-            return {"success": False, "message": "Invalid PIN."}
-
-        data = {
-            "account_number": row[0],
-            "full_name": row[1],
-            "phone": row[2],
-            "email": row[3],
-            "address": row[4],
-            "balance": row[5],
-            "created_at": row[6],
-        }
-        return {"success": True, "message": "Account found.", "data": data}
+        return check_user_account_op(self, account_number=account_number, pin=pin)
 
     def deposit_money(self, account_number, amount):
-        account_number = account_number.strip()
-        try:
-            amount = float(amount)
-        except (TypeError, ValueError):
-            return {"success": False, "message": "Deposit amount must be numeric."}
-        if amount <= 0:
-            return {"success": False, "message": "Deposit amount must be greater than zero."}
-
-        with self._connect() as conn:
-            cursor = conn.execute(
-                "UPDATE accounts SET balance = balance + ? WHERE account_number = ?",
-                (amount, account_number),
-            )
-            if cursor.rowcount == 0:
-                return {"success": False, "message": "Account not found."}
-
-            new_balance = conn.execute(
-                "SELECT balance FROM accounts WHERE account_number = ?", (account_number,)
-            ).fetchone()[0]
-
-        return {
-            "success": True,
-            "message": f"Deposit successful. New balance: ${new_balance:,.2f}",
-            "data": {"balance": new_balance},
-        }
+        return deposit_money_op(self, account_number=account_number, amount=amount)
 
     def widrawal_money(self, account_number, pin, amount):
-        account_number = account_number.strip()
-        try:
-            amount = float(amount)
-        except (TypeError, ValueError):
-            return {"success": False, "message": "Withdrawal amount must be numeric."}
-        if amount <= 0:
-            return {
-                "success": False,
-                "message": "Withdrawal amount must be greater than zero.",
-            }
-
-        pin_hash = self._hash_pin(pin)
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT balance FROM accounts WHERE account_number = ? AND pin_hash = ?",
-                (account_number, pin_hash),
-            ).fetchone()
-            if not row:
-                return {"success": False, "message": "Invalid account number or PIN."}
-
-            current_balance = row[0]
-            if current_balance < amount:
-                return {"success": False, "message": "Insufficient balance."}
-
-            conn.execute(
-                "UPDATE accounts SET balance = balance - ? WHERE account_number = ?",
-                (amount, account_number),
-            )
-            new_balance = current_balance - amount
-
-        return {
-            "success": True,
-            "message": f"Withdrawal successful. New balance: ${new_balance:,.2f}",
-            "data": {"balance": new_balance},
-        }
+        return withdrawal_money_op(self, account_number=account_number, pin=pin, amount=amount)
 
     def trainsfer_money(self, from_account, from_pin, to_account, amount):
-        from_account = from_account.strip()
-        to_account = to_account.strip()
-        if from_account == to_account:
-            return {"success": False, "message": "Source and destination accounts must differ."}
-        try:
-            amount = float(amount)
-        except (TypeError, ValueError):
-            return {"success": False, "message": "Transfer amount must be numeric."}
-        if amount <= 0:
-            return {"success": False, "message": "Transfer amount must be greater than zero."}
-
-        pin_hash = self._hash_pin(from_pin)
-        with self._connect() as conn:
-            try:
-                conn.execute("BEGIN")
-                source = conn.execute(
-                    "SELECT balance FROM accounts WHERE account_number = ? AND pin_hash = ?",
-                    (from_account, pin_hash),
-                ).fetchone()
-                if not source:
-                    conn.execute("ROLLBACK")
-                    return {"success": False, "message": "Invalid source account number or PIN."}
-
-                target = conn.execute(
-                    "SELECT balance FROM accounts WHERE account_number = ?", (to_account,)
-                ).fetchone()
-                if not target:
-                    conn.execute("ROLLBACK")
-                    return {"success": False, "message": "Destination account not found."}
-
-                if source[0] < amount:
-                    conn.execute("ROLLBACK")
-                    return {"success": False, "message": "Insufficient source balance."}
-
-                conn.execute(
-                    "UPDATE accounts SET balance = balance - ? WHERE account_number = ?",
-                    (amount, from_account),
-                )
-                conn.execute(
-                    "UPDATE accounts SET balance = balance + ? WHERE account_number = ?",
-                    (amount, to_account),
-                )
-                conn.execute("COMMIT")
-            except sqlite3.Error:
-                conn.execute("ROLLBACK")
-                return {"success": False, "message": "Transfer failed due to a database error."}
-
-            source_balance = conn.execute(
-                "SELECT balance FROM accounts WHERE account_number = ?", (from_account,)
-            ).fetchone()[0]
-            destination_balance = conn.execute(
-                "SELECT balance FROM accounts WHERE account_number = ?", (to_account,)
-            ).fetchone()[0]
-
-        return {
-            "success": True,
-            "message": "Transfer successful.",
-            "data": {
-                "source_balance": source_balance,
-                "destination_balance": destination_balance,
-            },
-        }
+        return transfer_money_op(
+            self,
+            from_account=from_account,
+            from_pin=from_pin,
+            to_account=to_account,
+            amount=amount,
+        )
 
     def update_user_information(
-        self, account_number, pin, full_name=None, phone=None, email=None, address=None
+        self,
+        account_number,
+        pin,
+        full_name=None,
+        phone=None,
+        email=None,
+        current_address=None,
+        id_card_number=None,
+        id_card_issue_date=None,
+        id_card_expiry_date=None,
+        career=None,
     ):
-        account_number = account_number.strip()
-        pin_hash = self._hash_pin(pin)
-
-        updates = {}
-        if full_name is not None and full_name.strip():
-            updates["full_name"] = full_name.strip()
-        if phone is not None and phone.strip():
-            updates["phone"] = phone.strip()
-        if email is not None and email.strip():
-            updates["email"] = email.strip()
-        if address is not None and address.strip():
-            updates["address"] = address.strip()
-
-        if not updates:
-            return {"success": False, "message": "Provide at least one field to update."}
-
-        with self._connect() as conn:
-            exists = conn.execute(
-                "SELECT 1 FROM accounts WHERE account_number = ? AND pin_hash = ?",
-                (account_number, pin_hash),
-            ).fetchone()
-            if not exists:
-                return {"success": False, "message": "Invalid account number or PIN."}
-
-            set_clause = ", ".join(f"{field} = ?" for field in updates.keys())
-            params = list(updates.values()) + [account_number]
-            conn.execute(
-                f"UPDATE accounts SET {set_clause} WHERE account_number = ?",  # nosec B608
-                params,
-            )
-
-        return self.check_user_account(account_number, pin)
+        return update_user_information_op(
+            self,
+            account_number=account_number,
+            pin=pin,
+            full_name=full_name,
+            phone=phone,
+            email=email,
+            current_address=current_address,
+            id_card_number=id_card_number,
+            id_card_issue_date=id_card_issue_date,
+            id_card_expiry_date=id_card_expiry_date,
+            career=career,
+        )
 
     def delete_user_account(self, account_number, pin):
-        account_number = account_number.strip()
-        pin_hash = self._hash_pin(pin)
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT balance FROM accounts WHERE account_number = ? AND pin_hash = ?",
-                (account_number, pin_hash),
-            ).fetchone()
-            if not row:
-                return {"success": False, "message": "Invalid account number or PIN."}
-            if row[0] != 0:
-                return {
-                    "success": False,
-                    "message": "Account balance must be 0.00 before deletion.",
-                }
-
-            conn.execute("DELETE FROM accounts WHERE account_number = ?", (account_number,))
-        return {"success": True, "message": "Account deleted successfully."}
+        return delete_user_account_op(self, account_number=account_number, pin=pin)
 
 
 class BankingApp(QMainWindow):
@@ -333,18 +206,30 @@ class BankingApp(QMainWindow):
 
     def _build_ui(self):
         root = QWidget()
+        root.setObjectName("rootContainer")
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(20, 20, 20, 20)
-        root_layout.setSpacing(14)
+        root_layout.setContentsMargins(24, 24, 24, 24)
+        root_layout.setSpacing(16)
+
+        header_card = QWidget()
+        header_card.setObjectName("headerCard")
+        header_layout = QVBoxLayout(header_card)
+        header_layout.setContentsMargins(24, 16, 24, 16)
+        header_layout.setSpacing(4)
 
         title = QLabel("Banking Management System")
         title.setObjectName("titleLabel")
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         subtitle = QLabel("Manage customer accounts, transactions, and updates")
         subtitle.setObjectName("subtitleLabel")
-        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
 
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("mainTabs")
+        self.tabs.setDocumentMode(True)
         self.tabs.addTab(self._create_account_tab(), "Create Account")
         self.tabs.addTab(self._check_account_tab(), "Check Account")
         self.tabs.addTab(self._deposit_tab(), "Deposit")
@@ -353,61 +238,392 @@ class BankingApp(QMainWindow):
         self.tabs.addTab(self._update_tab(), "Update Info")
         self.tabs.addTab(self._delete_tab(), "Delete Account")
 
+        log_card = QWidget()
+        log_card.setObjectName("logCard")
+        log_layout = QVBoxLayout(log_card)
+        log_layout.setContentsMargins(16, 12, 16, 16)
+        log_layout.setSpacing(8)
+
+        log_title = QLabel("Activity Log")
+        log_title.setObjectName("sectionLabel")
+        self.log_toggle_button = QToolButton()
+        self.log_toggle_button.setObjectName("logToggleButton")
+        self.log_toggle_button.setCheckable(True)
+        self.log_toggle_button.setArrowType(Qt.DownArrow)
+        self.log_toggle_button.setToolTip("Minimize activity log")
+        self.log_toggle_button.clicked.connect(self._toggle_activity_log)
+
+        log_header = QHBoxLayout()
+        log_header.setContentsMargins(0, 0, 0, 0)
+        log_header.addWidget(log_title)
+        log_header.addStretch()
+        log_header.addWidget(self.log_toggle_button)
+
         self.activity_log = QTextEdit()
         self.activity_log.setReadOnly(True)
         self.activity_log.setPlaceholderText("Operation logs appear here...")
-        self.activity_log.setMaximumHeight(170)
+        self.activity_log.setMinimumHeight(140)
+        self.activity_log.setMaximumHeight(190)
 
-        root_layout.addWidget(title)
-        root_layout.addWidget(subtitle)
+        log_layout.addLayout(log_header)
+        log_layout.addWidget(self.activity_log)
+
+        root_layout.addWidget(header_card)
         root_layout.addWidget(self.tabs, 1)
-        root_layout.addWidget(QLabel("Activity Log"))
-        root_layout.addWidget(self.activity_log)
+        root_layout.addWidget(log_card)
 
         self.setCentralWidget(root)
 
     def _form_shell(self):
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setObjectName("tabScrollArea")
+
+        scroll_content = QWidget()
+        scroll_content_layout = QVBoxLayout(scroll_content)
+        scroll_content_layout.setContentsMargins(18, 18, 18, 18)
+        scroll_content_layout.setSpacing(0)
+
+        card = QWidget()
+        card.setObjectName("formCard")
+        card.setMaximumWidth(780)
+        layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
         form.setSpacing(10)
-        form.setHorizontalSpacing(24)
+        form.setHorizontalSpacing(22)
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        form.setFormAlignment(Qt.AlignTop)
 
         status = QLabel("")
         status.setObjectName("statusLabel")
         status.setWordWrap(True)
 
         layout.addLayout(form)
+        scroll_content_layout.addWidget(card, 0, Qt.AlignTop | Qt.AlignHCenter)
+        scroll_content_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        tab_layout.addWidget(scroll)
         return tab, layout, form, status
 
     def _create_account_tab(self):
-        tab, layout, form, status = self._form_shell()
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setObjectName("tabScrollArea")
+
+        scroll_content = QWidget()
+        scroll_content_layout = QVBoxLayout(scroll_content)
+        scroll_content_layout.setContentsMargins(18, 18, 18, 18)
+        scroll_content_layout.setSpacing(0)
+
+        card = QWidget()
+        card.setObjectName("formCard")
+        card.setMaximumWidth(1140)
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(20)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(10)
+
+        form_title = QLabel("ID Information Form")
+        form_title.setObjectName("sectionLabel")
+        form_note = QLabel("Fields marked * are required.")
+        form_note.setObjectName("noteLabel")
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignRight)
+        form.setSpacing(10)
+        form.setHorizontalSpacing(22)
+        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        form.setFormAlignment(Qt.AlignTop)
+
+        status = QLabel("")
+        status.setObjectName("statusLabel")
+        status.setWordWrap(True)
+
         self.create_name = QLineEdit()
         self.create_phone = QLineEdit()
-        self.create_email = QLineEdit()
         self.create_address = QLineEdit()
+        self.create_career = QLineEdit()
+        self.create_id_card_number = QLineEdit()
+        self.create_id_card_issue_date = QLineEdit()
+        self.create_id_card_issue_date.setPlaceholderText("YYYY-MM-DD")
+        self.create_id_card_expiry_date = QLineEdit()
+        self.create_id_card_expiry_date.setPlaceholderText("YYYY-MM-DD")
+        self.create_email = QLineEdit()
         self.create_pin = QLineEdit()
         self.create_pin.setEchoMode(QLineEdit.Password)
         self.create_opening_balance = QLineEdit("0")
+        self.create_validation_hint = QLabel("")
+        self.create_validation_hint.setObjectName("noteLabel")
 
-        form.addRow("Full Name:", self.create_name)
-        form.addRow("Phone:", self.create_phone)
+        form.addRow("ID Card Number *:", self.create_id_card_number)
+        form.addRow("Date Create ID Card *:", self.create_id_card_issue_date)
+        form.addRow("Expiry Date *:", self.create_id_card_expiry_date)
+        form.addRow("Career *:", self.create_career)
+        form.addRow("Current Address *:", self.create_address)
+        form.addRow("Phone Number *:", self.create_phone)
+        form.addRow("Full Name *:", self.create_name)
         form.addRow("Email:", self.create_email)
-        form.addRow("Address:", self.create_address)
-        form.addRow("4-Digit PIN:", self.create_pin)
+        form.addRow("4-Digit PIN *:", self.create_pin)
         form.addRow("Opening Balance:", self.create_opening_balance)
 
-        action = QPushButton("Create Account")
-        action.clicked.connect(lambda: self._handle_create_account(status))
+        self.create_save_button = QPushButton("Save")
+        self.create_save_button.clicked.connect(lambda: self._handle_create_account(status))
+        self.create_clear_button = QPushButton("Clear")
+        self.create_clear_button.setObjectName("secondaryButton")
+        self.create_clear_button.clicked.connect(lambda: self._handle_clear_create_form(status))
 
-        layout.addWidget(action)
-        layout.addWidget(status)
-        layout.addStretch()
+        action_row = QHBoxLayout()
+        action_row.setSpacing(10)
+        action_row.addWidget(self.create_save_button)
+        action_row.addWidget(self.create_clear_button)
+        action_row.addStretch()
+
+        left_layout.addWidget(form_title)
+        left_layout.addWidget(form_note)
+        left_layout.addSpacing(6)
+        left_layout.addLayout(form)
+        left_layout.addLayout(action_row)
+        left_layout.addWidget(self.create_validation_hint)
+        left_layout.addWidget(status)
+        left_layout.addStretch()
+
+        right_panel = QWidget()
+        right_panel.setObjectName("previewPanel")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.setSpacing(8)
+
+        preview_title = QLabel("ID Preview")
+        preview_title.setObjectName("sectionLabel")
+        preview_note = QLabel("Preview layout only (not an official card design).")
+        preview_note.setObjectName("noteLabel")
+
+        preview_card = QWidget()
+        preview_card.setObjectName("previewCard")
+        preview_card_layout = QVBoxLayout(preview_card)
+        preview_card_layout.setContentsMargins(14, 14, 14, 14)
+        preview_card_layout.setSpacing(10)
+
+        preview_header = QHBoxLayout()
+        preview_header.setSpacing(8)
+        preview_left = QVBoxLayout()
+        preview_left.setContentsMargins(0, 0, 0, 0)
+        preview_left.setSpacing(2)
+
+        preview_tag = QLabel("ID CARD")
+        preview_tag.setObjectName("previewMetaLabel")
+        self.preview_id_card_number = QLabel("— — — — — —")
+        self.preview_id_card_number.setObjectName("previewNumber")
+        self.preview_status_badge = QLabel("Status: Unknown")
+        self.preview_status_badge.setObjectName("previewBadge")
+        self.preview_status_badge.setProperty("state", "unknown")
+
+        preview_left.addWidget(preview_tag)
+        preview_left.addWidget(self.preview_id_card_number)
+        preview_header.addLayout(preview_left, 1)
+        preview_header.addWidget(self.preview_status_badge, 0, Qt.AlignTop)
+
+        details_grid = QGridLayout()
+        details_grid.setHorizontalSpacing(14)
+        details_grid.setVerticalSpacing(8)
+
+        def _create_preview_item(title_text):
+            container = QWidget()
+            container_layout = QVBoxLayout(container)
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            container_layout.setSpacing(2)
+            title = QLabel(title_text)
+            title.setObjectName("previewMetaLabel")
+            value = QLabel("—")
+            value.setObjectName("previewMetaValue")
+            value.setWordWrap(True)
+            container_layout.addWidget(title)
+            container_layout.addWidget(value)
+            return container, value
+
+        issue_item, self.preview_issue_date = _create_preview_item("Date Create ID Card")
+        expiry_item, self.preview_expiry_date = _create_preview_item("Expiry Date")
+        career_item, self.preview_career = _create_preview_item("Career")
+        phone_item, self.preview_phone = _create_preview_item("Phone")
+
+        details_grid.addWidget(issue_item, 0, 0)
+        details_grid.addWidget(expiry_item, 0, 1)
+        details_grid.addWidget(career_item, 1, 0)
+        details_grid.addWidget(phone_item, 1, 1)
+
+        address_title = QLabel("Current Address")
+        address_title.setObjectName("previewMetaLabel")
+        self.preview_address = QLabel("—")
+        self.preview_address.setObjectName("previewMetaValue")
+        self.preview_address.setWordWrap(True)
+
+        preview_footer = QLabel("Generated preview for display only.")
+        preview_footer.setObjectName("previewFooter")
+
+        preview_card_layout.addLayout(preview_header)
+        preview_card_layout.addLayout(details_grid)
+        preview_card_layout.addWidget(address_title)
+        preview_card_layout.addWidget(self.preview_address)
+        preview_card_layout.addWidget(preview_footer)
+
+        right_layout.addWidget(preview_title)
+        right_layout.addWidget(preview_note)
+        right_layout.addWidget(preview_card)
+        right_layout.addStretch()
+
+        card_layout.addWidget(left_panel, 3)
+        card_layout.addWidget(right_panel, 2)
+
+        scroll_content_layout.addWidget(card, 0, Qt.AlignTop | Qt.AlignHCenter)
+        scroll_content_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        tab_layout.addWidget(scroll)
+
+        self.create_fields = [
+            self.create_id_card_number,
+            self.create_id_card_issue_date,
+            self.create_id_card_expiry_date,
+            self.create_career,
+            self.create_address,
+            self.create_phone,
+            self.create_name,
+            self.create_email,
+            self.create_pin,
+            self.create_opening_balance,
+        ]
+        for field in self.create_fields:
+            field.textChanged.connect(self._sync_create_preview_and_state)
+        self._sync_create_preview_and_state()
         return tab
+
+    @staticmethod
+    def _display_or_dash(value, dash="—"):
+        text = value.strip() if value is not None else ""
+        return text if text else dash
+
+    def _create_preview_status(self):
+        expiry_text = self.create_id_card_expiry_date.text().strip()
+        if not expiry_text:
+            return "Status: Unknown", "unknown"
+        if not self.bank._validate_date(expiry_text):
+            return "Status: Invalid Date", "invalid"
+
+        expiry_date = datetime.strptime(expiry_text, "%Y-%m-%d").date()
+        if expiry_date < datetime.now().date():
+            return "Status: Expired", "expired"
+        return "Status: Active", "active"
+
+    def _collect_create_form_errors(self):
+        errors = []
+        if not self.create_id_card_number.text().strip():
+            errors.append("ID card number is required.")
+
+        issue_text = self.create_id_card_issue_date.text().strip()
+        expiry_text = self.create_id_card_expiry_date.text().strip()
+        issue_date = None
+        expiry_date = None
+
+        if not issue_text:
+            errors.append("Date create ID card is required.")
+        elif not self.bank._validate_date(issue_text):
+            errors.append("Date create ID card must be YYYY-MM-DD.")
+        else:
+            issue_date = datetime.strptime(issue_text, "%Y-%m-%d")
+
+        if not expiry_text:
+            errors.append("Expiry date is required.")
+        elif not self.bank._validate_date(expiry_text):
+            errors.append("Expiry date must be YYYY-MM-DD.")
+        else:
+            expiry_date = datetime.strptime(expiry_text, "%Y-%m-%d")
+
+        if issue_date and expiry_date and expiry_date <= issue_date:
+            errors.append("Expiry date must be after ID card create date.")
+
+        if not self.create_career.text().strip():
+            errors.append("Career is required.")
+        if not self.create_address.text().strip():
+            errors.append("Current address is required.")
+
+        phone_number = self.create_phone.text().strip()
+        if not phone_number:
+            errors.append("Phone number is required.")
+        elif not re.fullmatch(r"[0-9+()\-\s]{6,20}", phone_number):
+            errors.append("Enter a valid phone number.")
+
+        if not self.create_name.text().strip():
+            errors.append("Full name is required.")
+
+        pin = self.create_pin.text().strip()
+        if not pin:
+            errors.append("PIN is required.")
+        elif not self.bank._validate_pin(pin):
+            errors.append("PIN must be exactly 4 digits.")
+
+        opening_balance = self.create_opening_balance.text().strip() or "0"
+        try:
+            opening_balance_value = float(opening_balance)
+            if opening_balance_value < 0:
+                errors.append("Opening balance cannot be negative.")
+        except (TypeError, ValueError):
+            errors.append("Opening balance must be numeric.")
+
+        return errors
+
+    def _sync_create_preview_and_state(self):
+        self.preview_id_card_number.setText(
+            self._display_or_dash(self.create_id_card_number.text(), "— — — — — —")
+        )
+        self.preview_issue_date.setText(self._display_or_dash(self.create_id_card_issue_date.text()))
+        self.preview_expiry_date.setText(
+            self._display_or_dash(self.create_id_card_expiry_date.text())
+        )
+        self.preview_career.setText(self._display_or_dash(self.create_career.text()))
+        self.preview_phone.setText(self._display_or_dash(self.create_phone.text()))
+        self.preview_address.setText(self._display_or_dash(self.create_address.text()))
+
+        status_text, status_state = self._create_preview_status()
+        self.preview_status_badge.setText(status_text)
+        self.preview_status_badge.setProperty("state", status_state)
+        self.preview_status_badge.style().unpolish(self.preview_status_badge)
+        self.preview_status_badge.style().polish(self.preview_status_badge)
+
+        errors = self._collect_create_form_errors()
+        is_valid = len(errors) == 0
+        self.create_save_button.setEnabled(is_valid)
+        self.create_validation_hint.setText("Ready to save." if is_valid else errors[0])
+
+    def _handle_clear_create_form(self, status_label):
+        for field in self.create_fields:
+            field.clear()
+        self.create_opening_balance.setText("0")
+
+        status_label.setText("")
+        status_label.setProperty("status", "")
+        status_label.style().unpolish(status_label)
+        status_label.style().polish(status_label)
+
+        self._sync_create_preview_and_state()
 
     def _check_account_tab(self):
         tab, layout, form, status = self._form_shell()
@@ -424,7 +640,10 @@ class BankingApp(QMainWindow):
         action = QPushButton("Check Account")
         action.clicked.connect(lambda: self._handle_check_account(status))
 
-        layout.addWidget(action)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_row.addWidget(action)
+        layout.addLayout(action_row)
         layout.addWidget(status)
         layout.addWidget(self.check_result)
         return tab
@@ -440,7 +659,10 @@ class BankingApp(QMainWindow):
         action = QPushButton("Deposit")
         action.clicked.connect(lambda: self._handle_deposit(status))
 
-        layout.addWidget(action)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_row.addWidget(action)
+        layout.addLayout(action_row)
         layout.addWidget(status)
         layout.addStretch()
         return tab
@@ -459,7 +681,10 @@ class BankingApp(QMainWindow):
         action = QPushButton("Withdraw")
         action.clicked.connect(lambda: self._handle_withdrawal(status))
 
-        layout.addWidget(action)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_row.addWidget(action)
+        layout.addLayout(action_row)
         layout.addWidget(status)
         layout.addStretch()
         return tab
@@ -480,7 +705,10 @@ class BankingApp(QMainWindow):
         action = QPushButton("Transfer")
         action.clicked.connect(lambda: self._handle_transfer(status))
 
-        layout.addWidget(action)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_row.addWidget(action)
+        layout.addLayout(action_row)
         layout.addWidget(status)
         layout.addStretch()
         return tab
@@ -494,21 +722,34 @@ class BankingApp(QMainWindow):
         self.update_phone = QLineEdit()
         self.update_email = QLineEdit()
         self.update_address = QLineEdit()
+        self.update_career = QLineEdit()
+        self.update_id_card_number = QLineEdit()
+        self.update_id_card_issue_date = QLineEdit()
+        self.update_id_card_issue_date.setPlaceholderText("YYYY-MM-DD")
+        self.update_id_card_expiry_date = QLineEdit()
+        self.update_id_card_expiry_date.setPlaceholderText("YYYY-MM-DD")
         note = QLabel("Leave any field blank to keep the existing value.")
         note.setObjectName("noteLabel")
 
         form.addRow("Account Number:", self.update_account)
         form.addRow("PIN:", self.update_pin)
         form.addRow("New Full Name:", self.update_name)
-        form.addRow("New Phone:", self.update_phone)
+        form.addRow("New Phone Number:", self.update_phone)
+        form.addRow("New Current Address:", self.update_address)
+        form.addRow("New Career:", self.update_career)
+        form.addRow("New ID Card Number:", self.update_id_card_number)
+        form.addRow("New ID Card Create Date:", self.update_id_card_issue_date)
+        form.addRow("New ID Card Expiry Date:", self.update_id_card_expiry_date)
         form.addRow("New Email:", self.update_email)
-        form.addRow("New Address:", self.update_address)
 
         action = QPushButton("Update Information")
         action.clicked.connect(lambda: self._handle_update(status))
 
         layout.addWidget(note)
-        layout.addWidget(action)
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        action_row.addWidget(action)
+        layout.addLayout(action_row)
         layout.addWidget(status)
         layout.addStretch()
         return tab
@@ -549,12 +790,23 @@ class BankingApp(QMainWindow):
         level = "INFO" if success else "ERROR"
         self.activity_log.append(f"[{stamp}] {level} - {message}")
 
+    def _toggle_activity_log(self, collapsed):
+        self.activity_log.setVisible(not collapsed)
+        self.log_toggle_button.setArrowType(Qt.RightArrow if collapsed else Qt.DownArrow)
+        self.log_toggle_button.setToolTip(
+            "Expand activity log" if collapsed else "Minimize activity log"
+        )
+
     def _handle_create_account(self, status_label):
         result = self.bank.create_user_account(
             full_name=self.create_name.text(),
             phone=self.create_phone.text(),
+            current_address=self.create_address.text(),
+            career=self.create_career.text(),
+            id_card_number=self.create_id_card_number.text(),
+            id_card_issue_date=self.create_id_card_issue_date.text(),
+            id_card_expiry_date=self.create_id_card_expiry_date.text(),
             email=self.create_email.text(),
-            address=self.create_address.text(),
             pin=self.create_pin.text(),
             opening_balance=self.create_opening_balance.text(),
         )
@@ -577,8 +829,12 @@ class BankingApp(QMainWindow):
                 f"Account Number : {data['account_number']}\n"
                 f"Name           : {data['full_name']}\n"
                 f"Phone          : {data['phone'] or '-'}\n"
+                f"Current Address: {data['address'] or '-'}\n"
+                f"Career         : {data['career'] or '-'}\n"
+                f"ID Card Number : {data['id_card_number'] or '-'}\n"
+                f"ID Card Create : {data['id_card_issue_date'] or '-'}\n"
+                f"ID Card Expiry : {data['id_card_expiry_date'] or '-'}\n"
                 f"Email          : {data['email'] or '-'}\n"
-                f"Address        : {data['address'] or '-'}\n"
                 f"Balance        : ${data['balance']:,.2f}\n"
                 f"Created At     : {data['created_at']}"
             )
@@ -623,8 +879,12 @@ class BankingApp(QMainWindow):
             pin=self.update_pin.text(),
             full_name=self.update_name.text(),
             phone=self.update_phone.text(),
+            current_address=self.update_address.text(),
+            career=self.update_career.text(),
+            id_card_number=self.update_id_card_number.text(),
+            id_card_issue_date=self.update_id_card_issue_date.text(),
+            id_card_expiry_date=self.update_id_card_expiry_date.text(),
             email=self.update_email.text(),
-            address=self.update_address.text(),
         )
         if result.get("success"):
             result["message"] = "User information updated successfully."
