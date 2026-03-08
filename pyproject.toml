@@ -1,0 +1,19 @@
+﻿[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "angkor-banking"
+version = "0.1.0"
+description = "Banking Management System (PyQt5)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyQt5>=5.15.9",
+]
+
+[project.scripts]
+angkor-banking = "angkor_banking.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

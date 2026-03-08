@@ -1,0 +1,5 @@
+/* Transfer tab specific styles */
+
+QWidget#transferTab QPushButton {
+    min-width: 140px;
+}

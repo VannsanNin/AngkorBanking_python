@@ -1,0 +1,5 @@
+/* Update Account tab specific styles */
+
+QWidget#updateAccountTab QCheckBox {
+    spacing: 8px;
+}

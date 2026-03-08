@@ -1,0 +1,5 @@
+/* Deposit tab specific styles */
+
+QWidget#depositTab QPushButton {
+    min-width: 140px;
+}

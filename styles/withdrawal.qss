@@ -1,0 +1,5 @@
+/* Withdrawal tab specific styles */
+
+QWidget#withdrawalTab QPushButton {
+    min-width: 140px;
+}

@@ -1,0 +1,5 @@
+/* Delete Account tab specific styles */
+
+QWidget#deleteAccountTab QCheckBox {
+    color: rgba(255, 206, 206, 215);
+}

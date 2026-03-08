@@ -30,16 +30,16 @@ def update_user_information(
     if id_card_number is not None and id_card_number.strip():
         updates["id_card_number"] = id_card_number.strip()
     if id_card_issue_date is not None and id_card_issue_date.strip():
-        issue_date = id_card_issue_date.strip()
-        if not bank._validate_date(issue_date):
+        issue_date = bank._normalize_date(id_card_issue_date)
+        if not issue_date:
             return {
                 "success": False,
                 "message": "ID card create date must be in YYYY-MM-DD format.",
             }
         updates["id_card_issue_date"] = issue_date
     if id_card_expiry_date is not None and id_card_expiry_date.strip():
-        expiry_date = id_card_expiry_date.strip()
-        if not bank._validate_date(expiry_date):
+        expiry_date = bank._normalize_date(id_card_expiry_date)
+        if not expiry_date:
             return {
                 "success": False,
                 "message": "ID card expiry date must be in YYYY-MM-DD format.",

@@ -1,0 +1,40 @@
+/* Create Account tab specific styles */
+
+QWidget#createAccountTab QWidget#previewPanel,
+QWidget#createAccountTab QWidget#previewCard {
+    background: rgba(255, 255, 255, 14);
+    border: 1px solid rgba(255, 255, 255, 30);
+    border-radius: 18px;
+}
+
+QWidget#createAccountTab QLabel#previewNumber {
+    color: #f2f7ff;
+    font-size: 21px;
+    font-weight: 700;
+}
+
+QWidget#createAccountTab QLabel#previewMetaLabel {
+    font-size: 11px;
+    color: rgba(232, 238, 252, 145);
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+
+QWidget#createAccountTab QLabel#previewMetaValue {
+    font-size: 13px;
+    color: #e8eefc;
+}
+
+QWidget#createAccountTab QLabel#previewFooter {
+    border-top: 1px solid rgba(255, 255, 255, 26);
+    margin-top: 4px;
+    padding-top: 8px;
+    font-size: 11px;
+    color: rgba(232, 238, 252, 145);
+}
+
+QWidget#createAccountTab QPushButton {
+    min-height: 30px;
+    min-width: 96px;
+    padding: 6px 10px;
+}
