@@ -10,20 +10,32 @@ QWidget#checkAccountTab QWidget#checkDetailsCard {
 
 QWidget#checkAccountTab QLabel#checkPrimaryValue {
     color: #f2f7ff;
-    font-size: 20px;
+    font-size: 24px;
     font-weight: 700;
 }
 
 QWidget#checkAccountTab QLabel#checkBalanceValue {
     color: #65e6a3;
-    font-size: 30px;
+    font-size: 34px;
     font-weight: 800;
+}
+
+QWidget#checkAccountTab QLabel#previewNumber {
+    font-size: 24px;
+}
+
+QWidget#checkAccountTab QLabel#previewMetaLabel {
+    font-size: 13px;
+}
+
+QWidget#checkAccountTab QLabel#previewMetaValue {
+    font-size: 16px;
 }
 
 QWidget#checkAccountTab QLabel#previewBadge {
     border-radius: 999px;
     padding: 5px 11px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
     color: rgba(232, 238, 252, 185);
     border: 1px solid rgba(255, 255, 255, 35);

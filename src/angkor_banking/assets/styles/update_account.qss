@@ -3,3 +3,34 @@
 QWidget#updateAccountTab QCheckBox {
     spacing: 8px;
 }
+
+QWidget#updateAccountTab QWidget#updateSummaryCard,
+QWidget#updateAccountTab QWidget#updateDetailsCard {
+    background: rgba(255, 255, 255, 14);
+    border: 1px solid rgba(255, 255, 255, 30);
+    border-radius: 18px;
+}
+
+QWidget#updateAccountTab QLabel#updatePrimaryValue {
+    color: #f2f7ff;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QWidget#updateAccountTab QLabel#updateBalanceValue {
+    color: #65e6a3;
+    font-size: 32px;
+    font-weight: 800;
+}
+
+QWidget#updateAccountTab QLabel#previewNumber {
+    font-size: 22px;
+}
+
+QWidget#updateAccountTab QLabel#previewMetaLabel {
+    font-size: 12px;
+}
+
+QWidget#updateAccountTab QLabel#previewMetaValue {
+    font-size: 15px;
+}

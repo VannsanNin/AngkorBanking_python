@@ -13,6 +13,7 @@ def update_user_information(
     id_card_issue_date=None,
     id_card_expiry_date=None,
     career=None,
+    account_status=None,
 ):
     account_number = bank._normalize_account_number(account_number)
     if len(account_number) != 10:
@@ -47,6 +48,14 @@ def update_user_information(
         updates["id_card_expiry_date"] = expiry_date
     if career is not None and career.strip():
         updates["career"] = career.strip()
+    if account_status is not None and str(account_status).strip():
+        normalized_status = bank._normalize_account_status(account_status)
+        if not normalized_status:
+            return {
+                "success": False,
+                "message": "Account status must be Active, Inactive, or Suspended.",
+            }
+        updates["account_status"] = normalized_status
 
     if not updates:
         return {"success": False, "message": "Provide at least one field to update."}

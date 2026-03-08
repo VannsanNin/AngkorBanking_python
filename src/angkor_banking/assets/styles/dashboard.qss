@@ -1,0 +1,77 @@
+/* Dashboard tab specific styles */
+
+QWidget#dashboardTab QWidget#dashboardHeroCard,
+QWidget#dashboardTab QWidget#dashboardMetricCard,
+QWidget#dashboardTab QWidget#dashboardStatusCard,
+QWidget#dashboardTab QWidget#dashboardRecentCard {
+    background: rgba(255, 255, 255, 14);
+    border: 1px solid rgba(255, 255, 255, 30);
+    border-radius: 18px;
+}
+
+QWidget#dashboardTab QLabel#dashboardMetricTitle {
+    font-size: 12px;
+    color: rgba(232, 238, 252, 160);
+    font-weight: 700;
+    letter-spacing: 0.25px;
+}
+
+QWidget#dashboardTab QLabel#dashboardMetricValue {
+    font-size: 28px;
+    color: #f2f7ff;
+    font-weight: 800;
+}
+
+QWidget#dashboardTab QLabel#dashboardStatusActive,
+QWidget#dashboardTab QLabel#dashboardStatusExpired,
+QWidget#dashboardTab QLabel#dashboardStatusInvalid {
+    border-radius: 10px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QWidget#dashboardTab QLabel#dashboardStatusActive {
+    color: #f3fff9;
+    border: 1px solid rgba(68, 212, 138, 85);
+    background: rgba(68, 212, 138, 42);
+}
+
+QWidget#dashboardTab QLabel#dashboardStatusExpired {
+    color: #ffeef1;
+    border: 1px solid rgba(255, 90, 106, 85);
+    background: rgba(255, 90, 106, 40);
+}
+
+QWidget#dashboardTab QLabel#dashboardStatusInvalid {
+    color: #fff7e6;
+    border: 1px solid rgba(255, 204, 102, 95);
+    background: rgba(255, 204, 102, 42);
+}
+
+QWidget#dashboardTab QTableWidget#dashboardRecentTable {
+    border: 1px solid rgba(255, 255, 255, 26);
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 38);
+    alternate-background-color: rgba(255, 255, 255, 6);
+    gridline-color: rgba(255, 255, 255, 18);
+    font-size: 15px;
+}
+
+QWidget#dashboardTab QTableWidget#dashboardRecentTable::item {
+    padding: 6px 8px;
+}
+
+QWidget#dashboardTab QHeaderView::section {
+    background: rgba(122, 166, 255, 40);
+    color: #e8eefc;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 22);
+    padding: 8px 10px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QWidget#dashboardTab QTableWidget#dashboardRecentTable::item:selected {
+    background: rgba(122, 166, 255, 60);
+}

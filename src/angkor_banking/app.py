@@ -10,10 +10,13 @@ from pathlib import Path
 from PyQt5.QtCore import QDate, Qt
 from PyQt5.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDateEdit,
     QFormLayout,
     QGridLayout,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,6 +27,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QTextEdit,
+    QTableWidget,
+    QTableWidgetItem,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -47,6 +52,7 @@ LEGACY_DB_PATH = PROJECT_ROOT / "banking.db"
 class BankingSystem:
     MAX_FAILED_PIN_ATTEMPTS = 3
     PIN_LOCK_MINUTES = 5
+    ACCOUNT_STATUSES = ("Active", "Inactive", "Suspended")
 
     def __init__(self, db_path=None):
         if db_path is None:
@@ -76,6 +82,7 @@ class BankingSystem:
                     id_card_issue_date TEXT NOT NULL,
                     id_card_expiry_date TEXT NOT NULL,
                     career TEXT NOT NULL,
+                    account_status TEXT NOT NULL DEFAULT 'Active',
                     pin_hash TEXT NOT NULL,
                     balance REAL NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
@@ -94,6 +101,7 @@ class BankingSystem:
             "id_card_issue_date": "TEXT NOT NULL DEFAULT ''",
             "id_card_expiry_date": "TEXT NOT NULL DEFAULT ''",
             "career": "TEXT NOT NULL DEFAULT ''",
+            "account_status": "TEXT NOT NULL DEFAULT 'Active'",
             "failed_pin_attempts": "INTEGER NOT NULL DEFAULT 0",
             "pin_locked_until": "TEXT",
         }
@@ -113,6 +121,14 @@ class BankingSystem:
             "UPDATE accounts SET id_card_expiry_date = '' WHERE id_card_expiry_date IS NULL"
         )
         conn.execute("UPDATE accounts SET career = '' WHERE career IS NULL")
+        conn.execute(
+            "UPDATE accounts SET account_status = 'Active' "
+            "WHERE account_status IS NULL OR TRIM(account_status) = ''"
+        )
+        conn.execute(
+            "UPDATE accounts SET account_status = 'Active' "
+            "WHERE LOWER(TRIM(account_status)) NOT IN ('active', 'inactive', 'suspended')"
+        )
         conn.execute(
             "UPDATE accounts SET failed_pin_attempts = 0 WHERE failed_pin_attempts IS NULL"
         )
@@ -233,6 +249,16 @@ class BankingSystem:
         return pin.isdigit() and len(pin) == 4
 
     @staticmethod
+    def _normalize_account_status(status_text):
+        value = str(status_text or "").strip().lower()
+        mapping = {
+            "active": "Active",
+            "inactive": "Inactive",
+            "suspended": "Suspended",
+        }
+        return mapping.get(value)
+
+    @staticmethod
     def _validate_date(date_text):
         return BankingSystem._normalize_date(date_text) is not None
 
@@ -241,6 +267,9 @@ class BankingSystem:
         date_text = str(date_text or "").strip()
         if not date_text:
             return None
+        # Accept Khmer numerals in date input by normalizing them to ASCII digits.
+        khmer_to_ascii = str.maketrans("០១២៣៤៥៦៧៨៩", "0123456789")
+        date_text = date_text.translate(khmer_to_ascii)
         formats = ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y")
         for fmt in formats:
             try:
@@ -317,6 +346,7 @@ class BankingSystem:
         id_card_issue_date=None,
         id_card_expiry_date=None,
         career=None,
+        account_status=None,
     ):
         return update_user_information_op(
             self,
@@ -330,6 +360,7 @@ class BankingSystem:
             id_card_issue_date=id_card_issue_date,
             id_card_expiry_date=id_card_expiry_date,
             career=career,
+            account_status=account_status,
         )
 
     def delete_user_account(self, account_number, pin):
@@ -346,6 +377,7 @@ class BankingApp(QMainWindow):
         self.setWindowTitle("Banking Management System")
         self.setMinimumSize(980, 720)
         self._build_ui()
+        self._refresh_dashboard()
         self._configure_tab_order()
 
     def _build_ui(self):
@@ -492,7 +524,9 @@ class BankingApp(QMainWindow):
         self.setTabOrder(self.update_name, self.update_phone)
         self.setTabOrder(self.update_phone, self.update_address)
         self.setTabOrder(self.update_address, self.update_career)
-        self.setTabOrder(self.update_career, self.update_id_card_number)
+        self.setTabOrder(self.update_career, self.update_account_status)
+        self.setTabOrder(self.update_account_status, self.update_account_status_check)
+        self.setTabOrder(self.update_account_status_check, self.update_id_card_number)
         self.setTabOrder(self.update_id_card_number, self.update_id_card_issue_date)
         self.setTabOrder(self.update_id_card_issue_date, self.update_id_card_issue_date_check)
         self.setTabOrder(
@@ -516,6 +550,8 @@ class BankingApp(QMainWindow):
         self.page_stack.setCurrentIndex(page_index)
         for i, button in enumerate(self.sidebar_buttons):
             button.setChecked(i == page_index)
+        if page_index == 0:
+            self._refresh_dashboard()
 
     def _dashboard_tab(self):
         tab = QWidget()
@@ -525,22 +561,244 @@ class BankingApp(QMainWindow):
         layout.setSpacing(12)
 
         hero = QWidget()
-        hero.setObjectName("formCard")
+        hero.setObjectName("dashboardHeroCard")
         hero_layout = QVBoxLayout(hero)
         hero_layout.setContentsMargins(18, 18, 18, 18)
         hero_layout.setSpacing(8)
 
-        title = QLabel("Dashboard")
+        hero_header = QHBoxLayout()
+        hero_header.setContentsMargins(0, 0, 0, 0)
+        hero_header.setSpacing(8)
+
+        title = QLabel("Dashboard Overview")
         title.setObjectName("sectionLabel")
-        subtitle = QLabel("Select an action from the sidebar to manage accounts and transactions.")
+        self.dashboard_last_updated = QLabel("Last updated: -")
+        self.dashboard_last_updated.setObjectName("noteLabel")
+        refresh_button = QPushButton("Refresh")
+        refresh_button.setObjectName("secondaryButton")
+        refresh_button.clicked.connect(self._refresh_dashboard)
+
+        hero_header.addWidget(title)
+        hero_header.addStretch()
+        hero_header.addWidget(self.dashboard_last_updated)
+        hero_header.addWidget(refresh_button)
+
+        subtitle = QLabel(
+            "Live account health and balance insights from the current database."
+        )
         subtitle.setObjectName("noteLabel")
         subtitle.setWordWrap(True)
 
-        hero_layout.addWidget(title)
+        hero_layout.addLayout(hero_header)
         hero_layout.addWidget(subtitle)
+
+        metrics_row = QHBoxLayout()
+        metrics_row.setContentsMargins(0, 0, 0, 0)
+        metrics_row.setSpacing(12)
+
+        def _build_metric_card(title_text):
+            card = QWidget()
+            card.setObjectName("dashboardMetricCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 12, 14, 12)
+            card_layout.setSpacing(4)
+            title_label = QLabel(title_text)
+            title_label.setObjectName("dashboardMetricTitle")
+            value_label = QLabel("0")
+            value_label.setObjectName("dashboardMetricValue")
+            card_layout.addWidget(title_label)
+            card_layout.addWidget(value_label)
+            card_layout.addStretch()
+            return card, value_label
+
+        total_accounts_card, self.dashboard_total_accounts = _build_metric_card(
+            "Total Accounts"
+        )
+        total_balance_card, self.dashboard_total_balance = _build_metric_card(
+            "Total Balance"
+        )
+        average_balance_card, self.dashboard_average_balance = _build_metric_card(
+            "Average Balance"
+        )
+        locked_accounts_card, self.dashboard_locked_accounts = _build_metric_card(
+            "Locked Accounts"
+        )
+
+        metrics_row.addWidget(total_accounts_card)
+        metrics_row.addWidget(total_balance_card)
+        metrics_row.addWidget(average_balance_card)
+        metrics_row.addWidget(locked_accounts_card)
+
+        details_row = QHBoxLayout()
+        details_row.setContentsMargins(0, 0, 0, 0)
+        details_row.setSpacing(12)
+
+        status_card = QWidget()
+        status_card.setObjectName("dashboardStatusCard")
+        status_layout = QVBoxLayout(status_card)
+        status_layout.setContentsMargins(14, 12, 14, 12)
+        status_layout.setSpacing(8)
+        status_title = QLabel("ID Card Status")
+        status_title.setObjectName("sectionLabel")
+        self.dashboard_active_ids = QLabel("Active: 0")
+        self.dashboard_active_ids.setObjectName("dashboardStatusActive")
+        self.dashboard_expired_ids = QLabel("Expired: 0")
+        self.dashboard_expired_ids.setObjectName("dashboardStatusExpired")
+        self.dashboard_invalid_ids = QLabel("Invalid: 0")
+        self.dashboard_invalid_ids.setObjectName("dashboardStatusInvalid")
+        status_layout.addWidget(status_title)
+        status_layout.addWidget(self.dashboard_active_ids)
+        status_layout.addWidget(self.dashboard_expired_ids)
+        status_layout.addWidget(self.dashboard_invalid_ids)
+        status_layout.addStretch()
+
+        recent_card = QWidget()
+        recent_card.setObjectName("dashboardRecentCard")
+        recent_layout = QVBoxLayout(recent_card)
+        recent_layout.setContentsMargins(14, 12, 14, 12)
+        recent_layout.setSpacing(8)
+        recent_title = QLabel("Recent Accounts")
+        recent_title.setObjectName("sectionLabel")
+        recent_note = QLabel("Latest 5 created accounts")
+        recent_note.setObjectName("noteLabel")
+        self.dashboard_recent_accounts = QTableWidget(0, 4)
+        self.dashboard_recent_accounts.setObjectName("dashboardRecentTable")
+        self.dashboard_recent_accounts.setHorizontalHeaderLabels(
+            ["Account", "Name", "Balance", "Created At"]
+        )
+        self.dashboard_recent_accounts.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.dashboard_recent_accounts.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+        self.dashboard_recent_accounts.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeToContents
+        )
+        self.dashboard_recent_accounts.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeToContents
+        )
+        self.dashboard_recent_accounts.verticalHeader().setVisible(False)
+        self.dashboard_recent_accounts.setAlternatingRowColors(True)
+        self.dashboard_recent_accounts.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.dashboard_recent_accounts.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.dashboard_recent_accounts.setFocusPolicy(Qt.NoFocus)
+        self.dashboard_recent_accounts.setMinimumHeight(190)
+        recent_layout.addWidget(recent_title)
+        recent_layout.addWidget(recent_note)
+        recent_layout.addWidget(self.dashboard_recent_accounts)
+        recent_layout.addStretch()
+
+        details_row.addWidget(status_card, 1)
+        details_row.addWidget(recent_card, 2)
+
         layout.addWidget(hero, 0, Qt.AlignTop)
-        layout.addStretch()
+        layout.addLayout(metrics_row)
+        layout.addLayout(details_row)
+        layout.addStretch(1)
         return tab
+
+    def _collect_dashboard_data(self):
+        now = datetime.now()
+        today = now.date()
+        now_text = now.strftime("%Y-%m-%d %H:%M:%S")
+        with self.bank._connect() as conn:
+            totals = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(balance), 0), COALESCE(AVG(balance), 0) FROM accounts"
+            ).fetchone()
+            locked_row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM accounts
+                WHERE pin_locked_until IS NOT NULL
+                  AND pin_locked_until > ?
+                """,
+                (now_text,),
+            ).fetchone()
+            recent_rows = conn.execute(
+                """
+                SELECT account_number, full_name, balance, created_at
+                FROM accounts
+                ORDER BY created_at DESC
+                LIMIT 5
+                """
+            ).fetchall()
+            expiry_rows = conn.execute(
+                "SELECT id_card_expiry_date FROM accounts"
+            ).fetchall()
+
+        active_count = 0
+        expired_count = 0
+        invalid_count = 0
+        for (expiry_text,) in expiry_rows:
+            value = str(expiry_text or "").strip()
+            if not value:
+                invalid_count += 1
+                continue
+            try:
+                expiry_date = datetime.strptime(value, "%Y-%m-%d").date()
+            except ValueError:
+                invalid_count += 1
+                continue
+            if expiry_date < today:
+                expired_count += 1
+            else:
+                active_count += 1
+
+        recent_accounts = []
+        for account_number, full_name, balance, created_at in recent_rows:
+            safe_name = self._display_or_dash(full_name)
+            try:
+                safe_balance = float(balance or 0.0)
+            except (TypeError, ValueError):
+                safe_balance = 0.0
+            recent_accounts.append(
+                {
+                    "account_number": self._display_or_dash(account_number, "-"),
+                    "full_name": safe_name,
+                    "balance": f"${safe_balance:,.2f}",
+                    "created_at": self._display_or_dash(created_at, "-"),
+                }
+            )
+
+        return {
+            "total_accounts": int(totals[0] or 0),
+            "total_balance": float(totals[1] or 0.0),
+            "average_balance": float(totals[2] or 0.0),
+            "locked_accounts": int(locked_row[0] or 0),
+            "active_ids": active_count,
+            "expired_ids": expired_count,
+            "invalid_ids": invalid_count,
+            "recent_accounts": recent_accounts,
+        }
+
+    def _refresh_dashboard(self):
+        data = self._collect_dashboard_data()
+        self.dashboard_total_accounts.setText(f"{data['total_accounts']:,}")
+        self.dashboard_total_balance.setText(f"${data['total_balance']:,.2f}")
+        self.dashboard_average_balance.setText(f"${data['average_balance']:,.2f}")
+        self.dashboard_locked_accounts.setText(f"{data['locked_accounts']:,}")
+        self.dashboard_active_ids.setText(f"Active: {data['active_ids']:,}")
+        self.dashboard_expired_ids.setText(f"Expired: {data['expired_ids']:,}")
+        self.dashboard_invalid_ids.setText(f"Invalid: {data['invalid_ids']:,}")
+        recent_accounts = data["recent_accounts"]
+        self.dashboard_recent_accounts.setRowCount(len(recent_accounts))
+        for row_index, account in enumerate(recent_accounts):
+            self.dashboard_recent_accounts.setItem(
+                row_index, 0, QTableWidgetItem(account["account_number"])
+            )
+            self.dashboard_recent_accounts.setItem(
+                row_index, 1, QTableWidgetItem(account["full_name"])
+            )
+            self.dashboard_recent_accounts.setItem(
+                row_index, 2, QTableWidgetItem(account["balance"])
+            )
+            self.dashboard_recent_accounts.setItem(
+                row_index, 3, QTableWidgetItem(account["created_at"])
+            )
+        self.dashboard_last_updated.setText(
+            f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
 
     def _form_shell(self, tab_object_name=None, card_max_width=780, full_width=False):
         tab = QWidget()
@@ -1008,6 +1266,9 @@ class BankingApp(QMainWindow):
         phone_item, self.check_preview_phone = _create_check_item("Phone")
         email_item, self.check_preview_email = _create_check_item("Email")
         career_item, self.check_preview_career = _create_check_item("Career")
+        account_status_item, self.check_preview_account_status = _create_check_item(
+            "Account Status"
+        )
         id_card_item, self.check_preview_id_card_number = _create_check_item("ID Card Number")
         issue_item, self.check_preview_issue_date = _create_check_item("ID Card Create Date")
         expiry_item, self.check_preview_expiry_date = _create_check_item("ID Card Expiry Date")
@@ -1016,10 +1277,11 @@ class BankingApp(QMainWindow):
         details_grid.addWidget(phone_item, 0, 0)
         details_grid.addWidget(email_item, 0, 1)
         details_grid.addWidget(career_item, 1, 0)
-        details_grid.addWidget(id_card_item, 1, 1)
-        details_grid.addWidget(issue_item, 2, 0)
-        details_grid.addWidget(expiry_item, 2, 1)
-        details_grid.addWidget(created_item, 3, 0, 1, 2)
+        details_grid.addWidget(account_status_item, 1, 1)
+        details_grid.addWidget(id_card_item, 2, 0)
+        details_grid.addWidget(issue_item, 2, 1)
+        details_grid.addWidget(expiry_item, 3, 0)
+        details_grid.addWidget(created_item, 3, 1)
 
         address_title = QLabel("Current Address")
         address_title.setObjectName("previewMetaLabel")
@@ -1052,6 +1314,7 @@ class BankingApp(QMainWindow):
         self.check_preview_phone.setText("—")
         self.check_preview_email.setText("—")
         self.check_preview_career.setText("—")
+        self.check_preview_account_status.setText("—")
         self.check_preview_id_card_number.setText("—")
         self.check_preview_issue_date.setText("—")
         self.check_preview_expiry_date.setText("—")
@@ -1143,6 +1406,13 @@ class BankingApp(QMainWindow):
         self.update_email = QLineEdit()
         self.update_address = QLineEdit()
         self.update_career = QLineEdit()
+        self.update_account_status = QComboBox()
+        self.update_account_status.addItems(list(self.bank.ACCOUNT_STATUSES))
+        self.update_account_status.setEnabled(False)
+        self.update_account_status_check = QCheckBox("Update")
+        self.update_account_status_check.toggled.connect(
+            self.update_account_status.setEnabled
+        )
         self.update_id_card_number = QLineEdit()
         self.update_id_card_issue_date = QDateEdit()
         self.update_id_card_issue_date.setCalendarPopup(True)
@@ -1193,6 +1463,9 @@ class BankingApp(QMainWindow):
         expiry_date_row = QHBoxLayout()
         expiry_date_row.addWidget(self.update_id_card_expiry_date)
         expiry_date_row.addWidget(self.update_id_card_expiry_date_check)
+        account_status_row = QHBoxLayout()
+        account_status_row.addWidget(self.update_account_status)
+        account_status_row.addWidget(self.update_account_status_check)
 
         self.update_preview_button = QPushButton("Preview Account")
         self.update_preview_button.clicked.connect(lambda: self._handle_update_preview(status))
@@ -1215,12 +1488,106 @@ class BankingApp(QMainWindow):
         right_layout.setSpacing(10)
         right_title = QLabel("Preview And Update")
         right_title.setObjectName("sectionLabel")
+        right_note = QLabel("Current account snapshot for safe edits before submit.")
+        right_note.setObjectName("noteLabel")
 
-        self.update_preview_info = QLabel("")
-        self.update_preview_info.setObjectName("noteLabel")
-        self.update_preview_info.setWordWrap(True)
-        self.update_preview_info.setMinimumHeight(180)
-        self.update_preview_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        summary_card = QWidget()
+        summary_card.setObjectName("updateSummaryCard")
+        summary_layout = QHBoxLayout(summary_card)
+        summary_layout.setContentsMargins(12, 12, 12, 12)
+        summary_layout.setSpacing(12)
+
+        summary_left = QWidget()
+        summary_left_layout = QVBoxLayout(summary_left)
+        summary_left_layout.setContentsMargins(0, 0, 0, 0)
+        summary_left_layout.setSpacing(2)
+        name_title = QLabel("CUSTOMER")
+        name_title.setObjectName("previewMetaLabel")
+        self.update_preview_name = QLabel("No account selected")
+        self.update_preview_name.setObjectName("updatePrimaryValue")
+        account_title = QLabel("ACCOUNT NUMBER")
+        account_title.setObjectName("previewMetaLabel")
+        self.update_preview_account_number = QLabel("----------")
+        self.update_preview_account_number.setObjectName("previewNumber")
+        summary_left_layout.addWidget(name_title)
+        summary_left_layout.addWidget(self.update_preview_name)
+        summary_left_layout.addSpacing(4)
+        summary_left_layout.addWidget(account_title)
+        summary_left_layout.addWidget(self.update_preview_account_number)
+
+        summary_right = QWidget()
+        summary_right_layout = QVBoxLayout(summary_right)
+        summary_right_layout.setContentsMargins(0, 0, 0, 0)
+        summary_right_layout.setSpacing(4)
+        balance_title = QLabel("AVAILABLE BALANCE")
+        balance_title.setObjectName("previewMetaLabel")
+        self.update_preview_balance = QLabel("$0.00")
+        self.update_preview_balance.setObjectName("updateBalanceValue")
+        self.update_preview_status_badge = QLabel("Status: Unknown")
+        self.update_preview_status_badge.setObjectName("previewBadge")
+        self.update_preview_status_badge.setProperty("state", "unknown")
+        summary_right_layout.addWidget(balance_title, 0, Qt.AlignRight)
+        summary_right_layout.addWidget(self.update_preview_balance, 0, Qt.AlignRight)
+        summary_right_layout.addWidget(self.update_preview_status_badge, 0, Qt.AlignRight)
+        summary_right_layout.addStretch()
+
+        summary_layout.addWidget(summary_left, 1)
+        summary_layout.addWidget(summary_right)
+
+        details_card = QWidget()
+        details_card.setObjectName("updateDetailsCard")
+        details_layout = QVBoxLayout(details_card)
+        details_layout.setContentsMargins(12, 12, 12, 12)
+        details_layout.setSpacing(10)
+
+        details_grid = QGridLayout()
+        details_grid.setHorizontalSpacing(16)
+        details_grid.setVerticalSpacing(8)
+
+        def _create_update_item(label_text):
+            item = QWidget()
+            item_layout = QVBoxLayout(item)
+            item_layout.setContentsMargins(0, 0, 0, 0)
+            item_layout.setSpacing(2)
+            title = QLabel(label_text)
+            title.setObjectName("previewMetaLabel")
+            value = QLabel("-")
+            value.setObjectName("previewMetaValue")
+            value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            item_layout.addWidget(title)
+            item_layout.addWidget(value)
+            return item, value
+
+        phone_item, self.update_preview_phone = _create_update_item("Phone")
+        email_item, self.update_preview_email = _create_update_item("Email")
+        career_item, self.update_preview_career = _create_update_item("Career")
+        account_status_item, self.update_preview_account_status = _create_update_item(
+            "Account Status"
+        )
+        id_card_item, self.update_preview_id_card_number = _create_update_item("ID Card Number")
+        issue_item, self.update_preview_issue_date = _create_update_item("ID Card Create Date")
+        expiry_item, self.update_preview_expiry_date = _create_update_item("ID Card Expiry Date")
+        created_item, self.update_preview_created_at = _create_update_item("Created At")
+
+        details_grid.addWidget(phone_item, 0, 0)
+        details_grid.addWidget(email_item, 0, 1)
+        details_grid.addWidget(career_item, 1, 0)
+        details_grid.addWidget(account_status_item, 1, 1)
+        details_grid.addWidget(id_card_item, 2, 0)
+        details_grid.addWidget(issue_item, 2, 1)
+        details_grid.addWidget(expiry_item, 3, 0)
+        details_grid.addWidget(created_item, 3, 1)
+
+        address_title = QLabel("Current Address")
+        address_title.setObjectName("previewMetaLabel")
+        self.update_preview_address = QLabel("-")
+        self.update_preview_address.setObjectName("previewMetaValue")
+        self.update_preview_address.setWordWrap(True)
+        self.update_preview_address.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        details_layout.addLayout(details_grid)
+        details_layout.addWidget(address_title)
+        details_layout.addWidget(self.update_preview_address)
         self._reset_update_preview()
 
         update_form = QFormLayout()
@@ -1232,6 +1599,7 @@ class BankingApp(QMainWindow):
         update_form.addRow("New Phone Number:", self.update_phone)
         update_form.addRow("New Current Address:", self.update_address)
         update_form.addRow("New Career:", self.update_career)
+        update_form.addRow("New Account Status:", account_status_row)
         update_form.addRow("New ID Card Number:", self.update_id_card_number)
         update_form.addRow("New ID Card Create Date:", issue_date_row)
         update_form.addRow("New ID Card Expiry Date:", expiry_date_row)
@@ -1242,7 +1610,9 @@ class BankingApp(QMainWindow):
         action_row.addWidget(self.update_submit_button)
 
         right_layout.addWidget(right_title)
-        right_layout.addWidget(self.update_preview_info)
+        right_layout.addWidget(right_note)
+        right_layout.addWidget(summary_card)
+        right_layout.addWidget(details_card)
         right_layout.addWidget(note)
         right_layout.addLayout(update_form)
         right_layout.addStretch(1)
@@ -1261,29 +1631,67 @@ class BankingApp(QMainWindow):
     def _reset_update_preview(self):
         self._update_preview_verified = None
         self._resolved_update_account_number = None
-        self.update_preview_info.setText(
-            "No preview yet. Enter account number or ID card number with PIN, then click Preview Account."
-        )
+        self.update_preview_name.setText("No account selected")
+        self.update_preview_account_number.setText("----------")
+        self.update_preview_balance.setText("$0.00")
+        self.update_preview_status_badge.setText("Status: Unknown")
+        self.update_preview_status_badge.setProperty("state", "unknown")
+        self.update_preview_status_badge.style().unpolish(self.update_preview_status_badge)
+        self.update_preview_status_badge.style().polish(self.update_preview_status_badge)
+        self.update_preview_phone.setText("-")
+        self.update_preview_email.setText("-")
+        self.update_preview_career.setText("-")
+        self.update_preview_account_status.setText("-")
+        self.update_preview_id_card_number.setText("-")
+        self.update_preview_issue_date.setText("-")
+        self.update_preview_expiry_date.setText("-")
+        self.update_preview_created_at.setText("-")
+        self.update_preview_address.setText("-")
 
     def _set_update_preview(self, data):
         status = (data.get("id_card_status") or "Unknown").strip()
-        self.update_preview_info.setText(
-            "\n".join(
-                [
-                    "Current Account Data",
-                    f"Name: {self._display_or_dash(data.get('full_name'))}",
-                    f"Account: {self._display_or_dash(data.get('account_number'))}",
-                    f"Phone: {self._display_or_dash(data.get('phone'))}",
-                    f"Email: {self._display_or_dash(data.get('email'))}",
-                    f"Address: {self._display_or_dash(data.get('address'))}",
-                    f"Career: {self._display_or_dash(data.get('career'))}",
-                    f"ID Card: {self._display_or_dash(data.get('id_card_number'))}",
-                    f"ID Issue: {self._display_or_dash(data.get('id_card_issue_date'))}",
-                    f"ID Expiry: {self._display_or_dash(data.get('id_card_expiry_date'))}",
-                    f"ID Status: {status}",
-                ]
-            )
+        status_state = status.lower()
+        if status_state == "invalid date":
+            status_state = "invalid"
+        elif status_state not in {"active", "expired", "invalid"}:
+            status_state = "unknown"
+
+        try:
+            balance_value = float(data.get("balance", 0.0))
+        except (TypeError, ValueError):
+            balance_value = 0.0
+
+        self.update_preview_name.setText(self._display_or_dash(data.get("full_name")))
+        self.update_preview_account_number.setText(
+            self._display_or_dash(data.get("account_number"), "----------")
         )
+        self.update_preview_balance.setText(f"${balance_value:,.2f}")
+        self.update_preview_status_badge.setText(f"Status: {status}")
+        self.update_preview_status_badge.setProperty("state", status_state)
+        self.update_preview_status_badge.style().unpolish(self.update_preview_status_badge)
+        self.update_preview_status_badge.style().polish(self.update_preview_status_badge)
+        self.update_preview_phone.setText(self._display_or_dash(data.get("phone")))
+        self.update_preview_email.setText(self._display_or_dash(data.get("email")))
+        self.update_preview_career.setText(self._display_or_dash(data.get("career")))
+        account_status = self._display_or_dash(data.get("account_status"), "Active")
+        self.update_preview_account_status.setText(account_status)
+        if not self.update_account_status_check.isChecked():
+            idx = self.update_account_status.findText(account_status)
+            if idx >= 0:
+                self.update_account_status.setCurrentIndex(idx)
+        self.update_preview_id_card_number.setText(
+            self._display_or_dash(data.get("id_card_number"))
+        )
+        self.update_preview_issue_date.setText(
+            self._display_or_dash(data.get("id_card_issue_date"))
+        )
+        self.update_preview_expiry_date.setText(
+            self._display_or_dash(data.get("id_card_expiry_date"))
+        )
+        self.update_preview_created_at.setText(
+            self._display_or_dash(data.get("created_at"))
+        )
+        self.update_preview_address.setText(self._display_or_dash(data.get("address")))
 
     def _handle_update_preview(self, status_label):
         account_number = self.bank._resolve_account_number(self.update_lookup.text())
@@ -1344,6 +1752,8 @@ class BankingApp(QMainWindow):
         label.style().unpolish(label)
         label.style().polish(label)
         self._log(message, success)
+        if success:
+            self._refresh_dashboard()
 
     def _log(self, message, success):
         stamp = datetime.now().strftime("%H:%M:%S")
@@ -1412,6 +1822,9 @@ class BankingApp(QMainWindow):
             self.check_preview_phone.setText(self._display_or_dash(data.get("phone")))
             self.check_preview_email.setText(self._display_or_dash(data.get("email")))
             self.check_preview_career.setText(self._display_or_dash(data.get("career")))
+            self.check_preview_account_status.setText(
+                self._display_or_dash(data.get("account_status"), "Active")
+            )
             self.check_preview_id_card_number.setText(
                 self._display_or_dash(data.get("id_card_number"))
             )
@@ -1506,6 +1919,11 @@ class BankingApp(QMainWindow):
                 else None
             ),
             email=self.update_email.text().strip() or None,
+            account_status=(
+                self.update_account_status.currentText()
+                if self.update_account_status_check.isChecked()
+                else None
+            ),
         )
         if result.get("success"):
             result["message"] = "User information updated successfully."
@@ -1540,6 +1958,7 @@ def load_qss(
     if qss_files is None:
         qss_files = [
             "base.qss",
+            "dashboard.qss",
             "create_account.qss",
             "check_account.qss",
             "deposit.qss",

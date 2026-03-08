@@ -46,6 +46,7 @@ def check_user_account(bank, account_number, pin=None):
                 id_card_issue_date,
                 id_card_expiry_date,
                 career,
+                account_status,
                 balance,
                 created_at
             FROM accounts
@@ -67,7 +68,8 @@ def check_user_account(bank, account_number, pin=None):
         "id_card_expiry_date": row[7],
         "id_card_status": _id_card_status(row[7]),
         "career": row[8],
-        "balance": row[9],
-        "created_at": row[10],
+        "account_status": bank._normalize_account_status(row[9]) or "Active",
+        "balance": row[10],
+        "created_at": row[11],
     }
     return {"success": True, "message": "Account found.", "data": data}

@@ -14,10 +14,15 @@ def delete_user_account(bank, account_number, pin):
         ).fetchone()
         if not row:
             return {"success": False, "message": "Account not found."}
-        if row[0] != 0:
+        balance = float(row[0] or 0.0)
+        # SQLite stores REAL as floating point; treat values that round to 0.00 as zero.
+        if round(balance, 2) != 0:
             return {
                 "success": False,
-                "message": "Account balance must be 0.00 before deletion.",
+                "message": (
+                    "Account balance must be 0.00 before deletion. "
+                    f"Current balance: ${balance:,.2f}"
+                ),
             }
 
         conn.execute("DELETE FROM accounts WHERE account_number = ?", (account_number,))
