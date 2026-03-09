@@ -63,6 +63,27 @@ def create_user_account(
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with bank._connect() as conn:
+        duplicate = conn.execute(
+            "SELECT 1 FROM accounts WHERE id_card_number = ? LIMIT 1",
+            (id_card_number,),
+        ).fetchone()
+        if duplicate:
+            return {"success": False, "message": "ID card number already exists."}
+        duplicate_phone = conn.execute(
+            "SELECT 1 FROM accounts WHERE phone = ? LIMIT 1",
+            (phone,),
+        ).fetchone()
+        if duplicate_phone:
+            return {"success": False, "message": "Phone number already exists."}
+        cleaned_email = email.strip()
+        if cleaned_email:
+            duplicate_email = conn.execute(
+                "SELECT 1 FROM accounts WHERE LOWER(email) = LOWER(?) LIMIT 1",
+                (cleaned_email,),
+            ).fetchone()
+            if duplicate_email:
+                return {"success": False, "message": "Email already exists."}
+
         conn.execute(
             """
             INSERT INTO accounts (
@@ -76,7 +97,7 @@ def create_user_account(
                 account_number,
                 full_name,
                 phone,
-                email.strip(),
+                cleaned_email,
                 current_address,
                 id_card_number,
                 id_card_issue_date,

@@ -46,10 +46,10 @@ APP_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_ROOT.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_DB_PATH = DATA_DIR / "banking.db"
-LEGACY_DB_PATH = PROJECT_ROOT / "banking.db"
 
 
 class BankingSystem:
+
     MAX_FAILED_PIN_ATTEMPTS = 3
     PIN_LOCK_MINUTES = 5
     ACCOUNT_STATUSES = ("Active", "Inactive", "Suspended")
@@ -57,10 +57,7 @@ class BankingSystem:
     def __init__(self, db_path=None):
         if db_path is None:
             DATA_DIR.mkdir(exist_ok=True)
-            if LEGACY_DB_PATH.exists() and not DEFAULT_DB_PATH.exists():
-                db_path = LEGACY_DB_PATH
-            else:
-                db_path = DEFAULT_DB_PATH
+            db_path = DEFAULT_DB_PATH
         self.db_path = str(db_path)
         self._initialize_db()
 
@@ -68,6 +65,7 @@ class BankingSystem:
         return sqlite3.connect(self.db_path)
 
     def _initialize_db(self):
+        """Create required schema and apply backward-compatible column migrations."""
         with self._connect() as conn:
             conn.execute(
                 """
@@ -93,6 +91,7 @@ class BankingSystem:
 
     @staticmethod
     def _migrate_accounts_table(conn):
+        """Keep existing databases compatible when new fields are introduced."""
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(accounts)").fetchall()
         }
@@ -139,6 +138,7 @@ class BankingSystem:
         return "".join(char for char in raw_account_number if char.isdigit())
 
     def _resolve_account_number(self, account_or_id):
+        """Accept account number or ID card number and return canonical account number."""
         lookup_value = str(account_or_id or "").strip()
         if not lookup_value:
             return None
@@ -171,6 +171,15 @@ class BankingSystem:
             return None
 
     def _verify_account_pin(self, conn, account_number, pin):
+        """
+        Validate PIN with lockout policy.
+
+        Flow:
+        1. Reject non-4-digit PINs.
+        2. Reject temporary-locked accounts.
+        3. Reset counters on success or lock expiry.
+        4. Increment failed attempts and lock after threshold.
+        """
         pin = str(pin or "").strip()
         if not self._validate_pin(pin):
             return {"success": False, "message": "PIN must be exactly 4 digits."}
@@ -368,6 +377,8 @@ class BankingSystem:
 
 
 class BankingApp(QMainWindow):
+    """PyQt application shell: builds UI and delegates operations to BankingSystem."""
+
     STATUS_ROW_HEIGHT = 40
 
     def __init__(self):
@@ -1745,6 +1756,7 @@ class BankingApp(QMainWindow):
         return tab
 
     def _set_status(self, label, result):
+        """Render operation status, write to activity log, and refresh dashboard on success."""
         message = result.get("message", "")
         success = result.get("success", False)
         label.setText(message)
@@ -1887,6 +1899,7 @@ class BankingApp(QMainWindow):
             normalized_account,
             self.bank._hash_pin(self.update_pin.text().strip()),
         )
+        # Require preview + current PIN verification before allowing sensitive updates.
         if self._update_preview_verified != preview_key:
             self._set_status(
                 status_label,
@@ -1955,6 +1968,7 @@ def load_qss(
     fallback_qss_path=APP_ROOT / "assets" / "styles.qss",
     qss_files=None,
 ):
+    """Load split QSS files first; fall back to legacy single-file stylesheet."""
     if qss_files is None:
         qss_files = [
             "base.qss",
@@ -1988,6 +2002,7 @@ def load_qss(
 
 
 def main():
+    """Application entry point."""
     app = QApplication(sys.argv)
     load_qss(app)
     window = BankingApp()

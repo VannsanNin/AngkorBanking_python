@@ -87,6 +87,43 @@ def update_user_information(
                     "message": "ID card expiry date must be after ID card create date.",
                 }
 
+        if "id_card_number" in updates:
+            duplicate = conn.execute(
+                """
+                SELECT 1
+                FROM accounts
+                WHERE id_card_number = ? AND account_number != ?
+                LIMIT 1
+                """,
+                (updates["id_card_number"], account_number),
+            ).fetchone()
+            if duplicate:
+                return {"success": False, "message": "ID card number already exists."}
+        if "phone" in updates:
+            duplicate_phone = conn.execute(
+                """
+                SELECT 1
+                FROM accounts
+                WHERE phone = ? AND account_number != ?
+                LIMIT 1
+                """,
+                (updates["phone"], account_number),
+            ).fetchone()
+            if duplicate_phone:
+                return {"success": False, "message": "Phone number already exists."}
+        if "email" in updates:
+            duplicate_email = conn.execute(
+                """
+                SELECT 1
+                FROM accounts
+                WHERE LOWER(email) = LOWER(?) AND account_number != ?
+                LIMIT 1
+                """,
+                (updates["email"], account_number),
+            ).fetchone()
+            if duplicate_email:
+                return {"success": False, "message": "Email already exists."}
+
         set_clause = ", ".join(f"{field} = ?" for field in updates.keys())
         params = list(updates.values()) + [account_number]
         conn.execute(
